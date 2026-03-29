@@ -42,7 +42,8 @@ export default function AuditApp() {
 
     // 创建新的 EventSource 连接
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const url = `${apiUrl}/api/v1/api/audit?company_name=${encodeURIComponent(query)}`;
+    const baseUrl = apiUrl.endsWith('/api/v1') ? apiUrl : `${apiUrl}/api/v1`;
+    const url = `${baseUrl}/audit?company_name=${encodeURIComponent(query)}`;
     const source = new EventSource(url);
 
     source.onmessage = (event) => {
