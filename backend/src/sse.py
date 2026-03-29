@@ -20,7 +20,7 @@ class SSEStreamer:
         except Exception as e:
             yield {"event": "error", "data": json.dumps({"type": "error", "message": str(e)})}
 
-@router.post("/audit")
+@router.get("/audit")
 async def stream_audit(company_name: str):
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name required")
