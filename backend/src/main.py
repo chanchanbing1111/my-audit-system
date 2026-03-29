@@ -1,29 +1,22 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import os
-from dotenv import load_dotenv
-from .sse import app as sse_app  # Import the configured router with CORS
+from .sse import router as sse_router
 
-# Load environment variables
-load_dotenv()
+app = FastAPI(title="Sentient Audit System API")
 
-app = FastAPI(
-    title="Sentient Audit System API",
-    description="AI Financial Audit System Backend with Real-time Streaming",
-    version="1.0.0"
+# 在这里统一配置 CORS，前端才能连上
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # 生产环境可以填具体的 Vercel 地址
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Check for required API key
-if not os.getenv("TAVILY_API_KEY"):
-    print("WARNING: TAVILY_API_KEY not found in environment variables")
-    print("Please create a .env file in the backend directory with your TAVILY_API_KEY")
-
-# Include SSE routes with CORS configuration
-app.include_router(sse_app, prefix="/api/v1", tags=["audit"])
+# 注册路由：注意 prefix 是 /api/v1
+app.include_router(sse_router, prefix="/api/v1", tags=["audit"])
 
 @app.get("/")
 async def root():
-    return {"message": "Sentient Audit System API is running"}
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+    return {"message": "API is running"}
