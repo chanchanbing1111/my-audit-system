@@ -78,7 +78,7 @@ class AuditEngine:
                 资料：{context[:3500]}"""
                 
                 response = client.chat.completions.create(
-                    model="glm-4",
+                    model="glm-4.6v",
                     messages=[{"role": "user", "content": prompt}],
                     response_format={ "type": "json_object" },
                     timeout=20
