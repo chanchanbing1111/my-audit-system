@@ -54,7 +54,19 @@ export default function AuditApp() {
         console.error('Failed to parse SSE message:', e);
       }
     };
-
+    // ✨ 新增：专门处理后端发来的 complete 事件
+    source.addEventListener('complete', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('审计完成:', data);
+        setIsTyping(false); // 停止加载动画
+        // 如果 complete 里也带有结果，可以同样调用 handleSSEMessage
+        handleSSEMessage(data, msgId); 
+        source.close(); // 完成后关闭连接
+      } catch (e) {
+        console.warn('Complete event parse error:', e);
+      }
+    });
     source.onerror = (e) => {
       console.error('SSE error:', e);
       setError('连接到审计服务器失败，请检查网络连接');
