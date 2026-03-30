@@ -334,25 +334,24 @@ export default function AuditApp() {
                         </div>
 
                         {/* 动态指标卡片 */}
-                        {msg.metrics && (
-                          <div className="grid grid-cols-4 gap-6 mb-12">
-                            {[
-                              { l: '平均 ROE', v: `${msg.metrics.profitability?.[2025]?.profit_margin || 18.5}%`, c: '+2.3%', up: true },
-                              { l: '平均毛利率', v: `${msg.metrics.efficiency?.[2025]?.cash_flow_margin || 45.2}%`, c: '+1.8%', up: true },
-                              { l: '资产负债率', v: `${msg.metrics.solvency?.[2025]?.debt_to_equity || 35.6}%`, c: '-3.2%', up: false },
-                              { l: '2025营收', v: `¥${(msg.metrics.profitability?.[2025]?.revenue || 5234).toLocaleString()}亿`, c: '+12.5%', up: true },
-                            ].map((item, i) => (
-                              <div key={i} className="bg-[#F8FAFF]/50 p-6 rounded-2xl border border-[#F1F5FF] hover:shadow-md transition-all">
-                                <div className="text-slate-400 text-[10px] font-black mb-3 uppercase tracking-wider">{item.l}</div>
-                                <div className="text-2xl font-black mb-1">{item.v}</div>
-                                <div className={`text-xs font-bold flex items-center ${item.up ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                  {item.up ? '↗' : '↘'} {item.c}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
+{msg.metrics && (
+  <div className="grid grid-cols-4 gap-6 mb-12">
+    {[
+      { l: '审计综合评分', v: `${msg.metrics.health?.overall || 0}`, c: msg.metrics.health?.status === 'healthy' ? '财务稳健' : '风险预警', up: (msg.metrics.health?.overall || 0) > 70 },
+      { l: '最新年营收', v: `¥${msg.charts?.profit_chart?.data?.slice(-1)[0]?.revenue || '--'}亿`, c: '同比实时增长', up: true },
+      { l: '最新净利润', v: `¥${msg.charts?.profit_chart?.data?.slice(-1)[0]?.profit || '--'}亿`, c: '盈利能力分析完成', up: true },
+      { l: '异常项检测', v: `${msg.metrics.health?.anomaly_count || 0}`, c: '项科目待核实', up: false },
+    ].map((item, i) => (
+      <div key={i} className="bg-[#F8FAFF]/50 p-6 rounded-2xl border border-[#F1F5FF] hover:shadow-md transition-all">
+        <div className="text-slate-400 text-[10px] font-black mb-3 uppercase tracking-wider">{item.l}</div>
+        <div className="text-2xl font-black mb-1">{item.v}</div>
+        <div className={`text-xs font-bold flex items-center ${item.up ? 'text-emerald-500' : 'text-rose-500'}`}>
+           {item.c}
+        </div>
+      </div>
+    ))}
+  </div>
+)}
                         <div className="flex border-b border-slate-100 mb-8">
                           {[{ id: 'profit', l: '营收利润趋势' }, { id: 'assets', l: '年度资产构成' }, { id: 'cash', l: '年度现金流量' }].map(t => (
                             <button
