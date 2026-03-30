@@ -79,77 +79,82 @@ class AuditEngine:
 
         return workflow.compile(checkpointer=self.checkpointer)
 
-    def intent_node(self, state: AuditState) -> AuditState:
+  def intent_node(self, state: AuditState) -> Dict: # 👈 改为 Dict
         """Parse company name from user intent and initialize audit"""
-        state.add_log(f"开始审计流程: 解析公司名称 '{state.company_name}'")
-        state.add_log("正在验证公司名称格式和有效性...")
+        # 我们创建一个新的日志列表
+        new_logs = list(state.logs) if state.logs else []
+        new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始审计流程: 解析公司名称 '{state.company_name}'")
+        new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 正在验证公司名称格式和有效性...")
 
-        # Simple company name validation
         if not state.company_name or len(state.company_name.strip()) < 2:
-            state.add_log("❌ 错误: 公司名称无效，长度必须至少为2个字符")
+            new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ 错误: 公司名称无效")
             raise ValueError("Invalid company name")
 
-        state.add_log(f"✅ 公司名称 '{state.company_name}' 验证通过")
-        state.add_log("准备开始财务数据收集...")
+        new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 公司名称 '{state.company_name}' 验证通过")
+        new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 准备开始财务数据收集...")
 
-        return state
+        # ✅ 关键：返回字典，Key 必须对应 AuditState 里的字段
+        return {"logs": new_logs}
 
-    def fetch_data_node(self, state: AuditState) -> AuditState:
-        """Use Tavily to search for financial reports and collect raw data"""
-        state.add_log("进入数据收集阶段: 使用 Tavily 搜索财务报告")
-        state.add_log(f"正在搜索 {state.company_name} 的 2023-2025 年度财报...")
+   def fetch_data_node(self, state: AuditState) -> Dict:
+        """使用 Tavily 搜索真实的财务报告并收集原始数据"""
+        # 准备日志
+        new_logs = list(state.logs)
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        new_logs.append(f"[{timestamp}] 🚀 进入真实数据收集阶段")
+        new_logs.append(f"[{timestamp}] 🔍 正在为 {state.company_name} 进行深度全网搜索...")
 
         try:
-            # In a real implementation, this would call Tavily API
-            # For this example, we'll simulate data collection
-            state.add_log("🔍 正在连接 Tavily API 进行网络搜索...")
-            state.add_log("正在处理搜索结果，提取关键财务指标...")
+            # 1. 从环境变量获取真实的 API KEY
+            # 这里的 self.tavily_api_key 在 __init__ 中已经通过 os.getenv 读取了
+            api_key = self.tavily_api_key
+            
+            if not api_key or api_key == "your_tavily_api_key_here":
+                new_logs.append("⚠️ 未检测到有效的 TAVILY_API_KEY，请在 Railway 环境变量中配置")
+                raise ValueError("TAVILY_API_KEY is missing")
 
-            # Simulated raw data
-            simulated_data = {
+            # 2. 调用真实的 Tavily 客户端
+            from tavily import TavilyClient
+            tavily = TavilyClient(api_key=api_key)
+            
+            # 构建针对财报的专业搜索指令
+            query = f"{state.company_name} 2023 2024 annual report financial highlights revenue net income"
+            
+            # 执行高级搜索
+            search_response = tavily.search(
+                query=query, 
+                search_depth="advanced", 
+                max_results=5,
+                include_answer=True # 让 Tavily 直接给出 AI 摘要
+            )
+            
+            # 3. 构造真实的原始数据结构
+            real_data = {
                 "company": state.company_name,
-                "years": [2023, 2024, 2025],
-                "financial_metrics": {
-                    "revenue": [81500, 96000, 109000],  # in millions
-                    "net_income": [7000, 9100, 12000],   # in millions
-                    "assets": [104000, 120000, 135000],  # in millions
-                    "liabilities": [62000, 70000, 80000],  # in millions
-                    "equity": [42000, 50000, 55000],     # in millions
-                    "cash_flow": [5000, 6000, 7500]      # in millions
-                },
-                "source_urls": [
-                    "https://www.sec.gov/edgar/browse/?CIK=0001318605",
-                    "https://www.tesla.com/annual-report-2024",
-                    "https://www.tesla.com/quarterly-results-2025"
-                ]
+                "search_context": search_response.get('answer', ''),
+                "search_results": search_response.get('results', []),
+                "collected_at": datetime.now().isoformat(),
+                "source_urls": [r['url'] for r in search_response.get('results', [])]
             }
 
-            state.raw_data = simulated_data
-            state.add_log(f"✅ 成功收集 {len(simulated_data['years'])} 年的财务数据")
-            state.add_log("数据验证: 检查财务报表的完整性和一致性...")
+            new_logs.append(f"✅ 成功获取 {len(real_data['source_urls'])} 个真实数据源")
+            new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 数据收集完成，准备进入 AI 审计分析")
 
-            # Validate accounting equation for each year
-            for year, revenue, net_income, assets, liabilities, equity, cash_flow in zip(
-                simulated_data["years"],
-                simulated_data["financial_metrics"]["revenue"],
-                simulated_data["financial_metrics"]["net_income"],
-                simulated_data["financial_metrics"]["assets"],
-                simulated_data["financial_metrics"]["liabilities"],
-                simulated_data["financial_metrics"]["equity"],
-                simulated_data["financial_metrics"]["cash_flow"]
-            ):
-                if not abs(assets - (liabilities + equity)) < 1:  # Allow small tolerance
-                    state.add_log(f"⚠️ 警告: {year} 年会计方程式验证失败")
-                else:
-                    state.add_log(f"✅ {year} 年会计方程式验证通过")
-
-            state.add_log("数据收集阶段完成，准备进行审计逻辑分析...")
+            # 4. ✨ 关键：必须返回字典 (Dict) 
+            return {
+                "raw_data": real_data,
+                "logs": new_logs
+            }
 
         except Exception as e:
-            state.add_log(f"❌ 数据收集失败: {str(e)}")
-            raise
-
-        return state
+            error_msg = f"❌ 真实数据搜集失败: {str(e)}"
+            logger.error(error_msg)
+            new_logs.append(error_msg)
+            # 报错时也必须返回字典，防止程序彻底卡死
+            return {
+                "logs": new_logs,
+                "raw_data": {"status": "error", "error_detail": str(e)}
+            }
 
     def audit_logic_node(self, state: AuditState) -> AuditState:
         """Calculate financial metrics and perform audit logic"""
