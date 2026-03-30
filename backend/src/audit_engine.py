@@ -366,33 +366,40 @@ class AuditEngine:
 
     def run_audit(self, company_name: str) -> Dict:
         """Run the complete audit workflow"""
-        state = AuditState(company_name=company_name)
-        state.add_log("初始化审计状态")
+        # 关键修改：直接构造一个符合 AuditState 结构的字典，而不是实例化对象
+        initial_input = {
+            "company_name": company_name,
+            "raw_data": {},
+            "metrics": {},
+            "logs": [f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 初始化审计状态"]
+        }
 
         try:
-            # Run the workflow
-            final_state = self.workflow.invoke(
-                state,
+            # 调用 workflow 时传入字典
+            final_output = self.workflow.invoke(
+                initial_input,
                 config=RunnableConfig(
-                    configurable={"thread_id": "audit-thread-1"}
+                    configurable={"thread_id": f"audit-{datetime.now().timestamp()}"}
                 )
             )
 
+            # final_output 现在是一个字典或对象，取决于 LangGraph 版本，我们统一处理
             return {
                 "status": "success",
-                "company_name": final_state.company_name,
-                "metrics": final_state.metrics,
-                "report": final_state.metrics.get("health", {}).get("status", "unknown"),
-                "logs": final_state.logs,
+                "company_name": company_name,
+                "metrics": getattr(final_output, 'metrics', final_output.get('metrics', {})),
+                "report": "success",
+                "logs": getattr(final_output, 'logs', final_output.get('logs', [])),
                 "execution_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
 
         except Exception as e:
+            logger.error(f"Workflow execution failed: {str(e)}")
             return {
                 "status": "error",
                 "company_name": company_name,
                 "error": str(e),
-                "logs": state.logs if 'state' in locals() else [],
+                "logs": [f"Error: {str(e)}"],
                 "execution_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
 
