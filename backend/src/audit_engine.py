@@ -156,6 +156,8 @@ class AuditEngine:
                 "company_name": company_name,
                 "metrics": final_output.get('metrics', {}),
                 "logs": final_output.get('logs', []),
+                "charts": final_output.get('charts', {}), 
+                "metrics_details": final_output.get('metrics_details', {}),
                 "execution_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         except Exception as e:
