@@ -54,7 +54,7 @@ class SSEStreamer:
                 "event": "message",
                 "data": json.dumps({"type": "error", "message": str(e)})
             }
-@router.get("/audit")
+@router.get("/audit/")
 async def stream_audit(company_name: str):
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name required")
