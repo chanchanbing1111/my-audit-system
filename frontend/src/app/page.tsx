@@ -129,30 +129,30 @@ export default function AuditApp() {
 
   // 动态渲染图表逻辑：显示 2023, 2024, 2025
   const RenderChart = ({ type, chartData }: { type: string; chartData?: any }) => {
-    const currentYear = 2026; // 固定基准
-    const latestFullYear = currentYear - 1;
-    const years = [(latestFullYear - 2).toString(), (latestFullYear - 1).toString(), latestFullYear.toString()];
-
+    // 1. 营收与利润趋势 (Bar Chart)
     if (type === 'profit') {
-      const profitData = chartData?.profit_chart?.data || [{ r: 65, n: 18 }, { r: 82, n: 30 }, { r: 100, n: 45 }];
+      const data = chartData?.profit_chart?.data || [];
+      if (data.length === 0) return <div className="text-slate-300 py-20 font-bold">暂无财报营收数据</div>;
+      const maxVal = Math.max(...data.map((d: any) => d.revenue || 1));
+      
       return (
         <div className="w-full h-full flex flex-col items-center animate-in fade-in duration-500">
           <div className="flex gap-8 mb-6">
             <div className="flex items-center text-[10px] font-black text-slate-400 tracking-widest">
-              <div className="w-3 h-3 bg-violet-500 mr-2 rounded-sm" /> 年度总营收
+              <div className="w-3 h-3 bg-violet-500 mr-2 rounded-sm" /> 年度总营收 (亿)
             </div>
             <div className="flex items-center text-[10px] font-black text-slate-400 tracking-widest">
-              <div className="w-3 h-3 bg-teal-400 mr-2 rounded-sm" /> 年度净利润
+              <div className="w-3 h-3 bg-teal-400 mr-2 rounded-sm" /> 年度净利润 (亿)
             </div>
           </div>
           <div className="flex-1 w-full flex items-end justify-around px-10 border-b border-slate-100 pb-2">
-            {profitData.map((d: any, i: number) => (
+            {data.map((d: any, i: number) => (
               <div key={i} className="flex flex-col items-center w-24 group">
                 <div className="flex items-end gap-2 h-44 w-full justify-center">
-                  <div style={{ height: `${d.r || d.revenue || 65}%` }} className="w-8 bg-violet-500 rounded-t-lg shadow-lg hover:brightness-110 transition-all" />
-                  <div style={{ height: `${d.n || d.net_income || 18}%` }} className="w-8 bg-teal-400 rounded-t-lg shadow-lg hover:brightness-110 transition-all" />
+                  <div style={{ height: `${(d.revenue / maxVal) * 90}%` }} className="w-8 bg-violet-500 rounded-t-lg shadow-lg" title={`营收: ${d.revenue}`} />
+                  <div style={{ height: `${(d.profit / maxVal) * 90}%` }} className="w-8 bg-teal-400 rounded-t-lg shadow-lg" title={`利润: ${d.profit}`} />
                 </div>
-                <span className="mt-4 text-[11px] font-bold text-slate-500">{years[i]}</span>
+                <span className="mt-4 text-[11px] font-bold text-slate-500">{d.year}年</span>
               </div>
             ))}
           </div>
@@ -160,50 +160,54 @@ export default function AuditApp() {
       );
     }
 
+    // 2. 年度现金流量 (新增加的动态逻辑)
+    if (type === 'cash') {
+      const data = chartData?.cash_flow_chart?.data || [];
+      if (data.length === 0) return <div className="text-slate-300 py-20 font-bold">未检测到经营现金流数据</div>;
+      const maxCash = Math.max(...data.map((d: any) => d.cash || 1));
+
+      return (
+        <div className="w-full h-full flex flex-col items-center animate-in fade-in duration-500">
+          <div className="flex-1 w-full flex items-center justify-around px-10">
+            {data.map((d: any, i: number) => (
+              <div key={i} className="flex flex-col items-center group">
+                <div className="w-16 bg-slate-50 rounded-2xl border border-slate-100 p-1 flex flex-col-reverse h-48 overflow-hidden">
+                  {/* 根据真实 cash 比例填充高度 */}
+                  <div 
+                    style={{ height: `${(d.cash / maxCash) * 100}%` }} 
+                    className="w-full bg-gradient-to-t from-teal-600 to-teal-400 rounded-xl transition-all duration-1000" 
+                  />
+                </div>
+                <span className="mt-4 text-[11px] font-bold text-slate-500">{d.year}年</span>
+                <span className="text-[10px] font-black text-teal-600 mt-1">¥{d.cash}亿</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // 3. 资产结构 (饼图样式)
     if (type === 'assets') {
-      const assetsData = chartData?.solvency_chart?.data || [1.5, 1.8, 2.2];
       return (
         <div className="w-full h-full flex flex-col items-center justify-center animate-in fade-in duration-500">
           <div className="relative w-48 h-48 mb-6">
             <div className="absolute inset-0 rounded-full border-[16px] border-violet-500 border-r-teal-400 border-b-amber-400 border-l-rose-400 rotate-45" />
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-2xl font-black">{years[2]}</span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase">年度资产结构</span>
+              <span className="text-2xl font-black">2024</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase">资产穿透中</span>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-x-10 gap-y-2">
-            {['流动资产 43.7%', '固定资产 32.1%', '无形资产 14.2%', '其他资产 10.0%'].map((txt, i) => (
-              <div key={i} className="flex items-center text-[11px] font-bold text-slate-500">
-                <div className={`w-2 h-2 mr-2 rounded-full ${['bg-violet-500', 'bg-teal-400', 'bg-amber-400', 'bg-rose-400'][i]}`} />
-                {txt}
-              </div>
-            ))}
+          <div className="grid grid-cols-2 gap-x-10 gap-y-2 text-[11px] font-bold text-slate-500">
+             <div className="flex items-center"><div className="w-2 h-2 mr-2 rounded-full bg-violet-500"/>流动资产</div>
+             <div className="flex items-center"><div className="w-2 h-2 mr-2 rounded-full bg-teal-400"/>固定资产</div>
           </div>
         </div>
       );
     }
 
-    if (type === 'cash') {
-      const cashData = chartData?.cash_flow_chart?.data || [40, 70, 95];
-      return (
-        <div className="w-full h-full flex flex-col items-center animate-in fade-in duration-500">
-          <div className="flex-1 w-full flex items-center justify-around px-10">
-            {cashData.map((d: any, i: number) => (
-              <div key={i} className="flex flex-col items-center group">
-                <div className="w-16 bg-slate-50 rounded-2xl border border-slate-100 p-1 flex flex-col-reverse h-48 overflow-hidden">
-                  <div style={{ height: `${d || 70}%` }} className="w-full bg-gradient-to-t from-teal-500 to-teal-300 rounded-xl" />
-                </div>
-                <span className="mt-4 text-[11px] font-bold text-slate-500">{years[i]}</span>
-                <span className="text-[10px] font-black text-teal-600 mt-1">经营性净现金</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-    return <div className="w-full h-full flex items-center justify-center text-slate-300 font-bold">图表加载中...</div>;
+    return <div className="w-full h-full flex items-center justify-center text-slate-300 font-bold">加载中...</div>;
   };
-
   return (
     <div className="min-h-screen bg-[#FDFDFF] flex flex-col font-sans text-slate-900">
       {/* 顶部行情滚动条 */}
