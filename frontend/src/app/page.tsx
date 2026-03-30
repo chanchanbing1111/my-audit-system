@@ -22,18 +22,19 @@ export default function AuditApp() {
     { label: `研报生成`, detail: `聚合归因分析完成，正在渲染可视化组件...` }
   ];
 
-  const handleSend = (text?: string) => {
+ const handleSend = (text?: string) => {
     const query = text || inputValue;
     if (!query.trim()) return;
 
-    // 💡 关键修改：先创建一个空对象占位，并给它一个固定的 ID
+    // 1. 生成 ID
     const msgId = Date.now();
-    const newAssistantMsgId = msgId + 1; // 给 AI 的回复一个预设 ID
+    const newAssistantMsgId = msgId + 1; 
 
+    // 2. 立即更新 UI，创建 AI 占位消息
     setMessages(prev => [
       ...prev, 
       { id: msgId, role: 'user', content: query },
-      { id: newAssistantMsgId, role: 'assistant', content: query, logs: [], loading: true } // 占位符
+      { id: newAssistantMsgId, role: 'assistant', content: query, logs: [], metrics: null, loading: true } 
     ]);
     
     setInputValue('');
@@ -41,6 +42,7 @@ export default function AuditApp() {
     setIsTyping(true);
     setError(null);
 
+    // 3. 连接 SSE
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
     }
@@ -55,7 +57,6 @@ export default function AuditApp() {
       try {
         const data = JSON.parse(event.data);
         console.log("📩 收到 SSE 消息:", data);
-        // 💡 传入 AI 消息的 ID
         handleSSEMessage(data, newAssistantMsgId);
       } catch (e) {
         console.error('Failed to parse SSE message:', e);
@@ -69,28 +70,28 @@ export default function AuditApp() {
     });
 
     source.onerror = (e) => {
+      console.error('SSE Error:', e);
       setError('连接到审计服务器失败');
       setIsTyping(false);
       source.close();
     };
 
     eventSourceRef.current = source;
-  };
-    // setEventSource(source); // 移除未使用的状态设置
-  };
+  }; // 👈 这里原本多了一个 }; 已经删掉
 
   const handleSSEMessage = (data: any, msgId: number) => {
     setMessages(prev => prev.map(msg => {
       if (msg.id === msgId) {
         switch (data.type) {
           case 'log':
-            const logContent = data.content || data.message;
+            // 兼容多种日志字段名
+            const logContent = data.content || data.message || "处理中...";
             return { ...msg, logs: [...(msg.logs || []), logContent] };
           
           case 'metrics':
             console.log("🎯 抓到指标数据:", data.metrics);
-            // 💡 确保不仅存入数据，还要设置 activeTab 让图表显示
-            setActiveTabMap(prevTab => ({ ...prevTab, [msgId.toString()]: 'profit' }));
+            // 💡 激活图表标签
+            setActiveTabMap(prevTab => ({ ...prevTab, [msgId]: 'profit' }));
             return {
               ...msg,
               metrics: data.metrics,
