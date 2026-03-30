@@ -7,5 +7,4 @@ openai>=1.3.0
 python-dotenv>=1.0.0
 sse-starlette>=1.6.0,<2.0.0
 plotly==5.17.0
-# 升级 langgraph 以适配最新的库
 langgraph>=0.0.30
