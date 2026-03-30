@@ -26,110 +26,89 @@ export default function AuditApp() {
     const query = text || inputValue;
     if (!query.trim()) return;
 
+    // 💡 关键修改：先创建一个空对象占位，并给它一个固定的 ID
     const msgId = Date.now();
-    setMessages(prev => [...prev, { id: msgId, role: 'user', content: query }]);
+    const newAssistantMsgId = msgId + 1; // 给 AI 的回复一个预设 ID
+
+    setMessages(prev => [
+      ...prev, 
+      { id: msgId, role: 'user', content: query },
+      { id: newAssistantMsgId, role: 'assistant', content: query, logs: [], loading: true } // 占位符
+    ]);
+    
     setInputValue('');
     setStage('chat');
     setIsTyping(true);
-    setCurrentStep(0);
     setError(null);
 
-    // 清理之前的 EventSource
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
-      eventSourceRef.current = null;
     }
 
-    // 创建新的 EventSource 连接
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     const baseUrl = apiUrl.endsWith('/api/v1') ? apiUrl : `${apiUrl}/api/v1`;
     const url = `${baseUrl}/audit?company_name=${encodeURIComponent(query)}`;
+    
     const source = new EventSource(url);
 
     source.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        handleSSEMessage(data, msgId);
+        console.log("📩 收到 SSE 消息:", data);
+        // 💡 传入 AI 消息的 ID
+        handleSSEMessage(data, newAssistantMsgId);
       } catch (e) {
         console.error('Failed to parse SSE message:', e);
       }
     };
-    // ✨ 新增：专门处理后端发来的 complete 事件
+
     source.addEventListener('complete', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('审计完成:', data);
-        setIsTyping(false); // 停止加载动画
-        // 如果 complete 里也带有结果，可以同样调用 handleSSEMessage
-        handleSSEMessage(data, msgId); 
-        source.close(); // 完成后关闭连接
-      } catch (e) {
-        console.warn('Complete event parse error:', e);
-      }
+      console.log('🏁 收到完成指令');
+      setIsTyping(false);
+      source.close();
     });
+
     source.onerror = (e) => {
-      console.error('SSE error:', e);
-      setError('连接到审计服务器失败，请检查网络连接');
+      setError('连接到审计服务器失败');
       setIsTyping(false);
       source.close();
     };
 
     eventSourceRef.current = source;
+  };
     // setEventSource(source); // 移除未使用的状态设置
   };
 
   const handleSSEMessage = (data: any, msgId: number) => {
-    switch (data.type) {
-      case 'start':
-        break;
-
-      case 'log':
-        // ✨ 修改：处理后端发来的 content (可能是字符串或对象)
-        const displayContent = typeof data.content === 'object' 
-          ? JSON.stringify(data.content, null, 2) 
-          : (data.content || data.message); // 兼容 content 或 message 字段
-
-        setMessages(prev => prev.map(msg =>
-          msg.id === msgId
-            ? { ...msg, logs: [...(msg.logs || []), displayContent] }
-            : msg
-        ));
-        break;
-
-      case 'metrics':
-        setMessages(prev => prev.map(msg =>
-          msg.id === msgId
-            ? {
-                ...msg,
-                metrics: data.metrics,
-                charts: data.charts,
-                metrics_details: data.metrics_details
-              }
-            : msg
-        ));
-        break;
-
-      case 'complete':
-        setIsTyping(false);
-        // 如果后端在 complete 里也带了最终数据，可以在这里处理
-        if (data.success) {
-          setActiveTabMap(prev => ({ ...prev, [msgId.toString()]: 'profit' }));
+    setMessages(prev => prev.map(msg => {
+      if (msg.id === msgId) {
+        switch (data.type) {
+          case 'log':
+            const logContent = data.content || data.message;
+            return { ...msg, logs: [...(msg.logs || []), logContent] };
+          
+          case 'metrics':
+            console.log("🎯 抓到指标数据:", data.metrics);
+            // 💡 确保不仅存入数据，还要设置 activeTab 让图表显示
+            setActiveTabMap(prevTab => ({ ...prevTab, [msgId.toString()]: 'profit' }));
+            return {
+              ...msg,
+              metrics: data.metrics,
+              charts: data.charts,
+              metrics_details: data.metrics_details,
+              loading: false
+            };
+          
+          case 'error':
+            setError(data.content || "审计过程出错");
+            return { ...msg, loading: false };
+            
+          default:
+            return msg;
         }
-        break;
-
-      case 'error':
-        // ✨ 修改：同样兼容对象格式的错误信息
-        const errorMessage = typeof data.message === 'object' 
-          ? JSON.stringify(data.message) 
-          : data.message;
-        setError(errorMessage);
-        setIsTyping(false);
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-          eventSourceRef.current = null;
-        }
-        break;
-    }
+      }
+      return msg;
+    }));
   };
 
   useEffect(() => {
