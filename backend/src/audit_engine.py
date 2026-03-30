@@ -5,102 +5,90 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime
 
-# 基础库导入
 from pydantic import BaseModel, Field, field_validator
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.runnables import RunnableConfig
 
-# 日志配置
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AuditState(BaseModel):
-    """状态定义 - 必须包含所有需要在节点间传递的键"""
-    company_name: str = Field(..., description="公司名称")
-    raw_data: Dict = Field(default_factory=dict, description="原始数据")
-    metrics: Dict = Field(default_factory=dict, description="财务指标")
-    charts: Dict = Field(default_factory=dict, description="图表数据") # ✅ 新增：存放动态图表
-    logs: List[str] = Field(default_factory=list, description="日志")
-
-    @field_validator('logs')
-    @classmethod
-    def ensure_logs_initialized(cls, v):
-        if v is None: return []
-        return v
+    company_name: str
+    raw_data: Dict = Field(default_factory=dict)
+    metrics: Dict = Field(default_factory=dict)
+    charts: Dict = Field(default_factory=dict)
+    logs: List[str] = Field(default_factory=list)
 
 class AuditEngine:
     def __init__(self, tavily_api_key: Optional[str] = None):
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
-        self.openai_api_key = os.getenv("OPENAI_API_KEY") 
-        
-        if not self.tavily_api_key:
-            logger.warning("TAVILY_API_KEY missing!")
-        
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.checkpointer = MemorySaver()
         self.workflow = self._build_workflow()
 
     def _build_workflow(self) -> StateGraph:
         workflow = StateGraph(AuditState)
-
         workflow.add_node("intent_node", self.intent_node)
         workflow.add_node("fetch_data_node", self.fetch_data_node)
         workflow.add_node("audit_logic_node", self.audit_logic_node)
         workflow.add_node("report_node", self.report_node)
-
         workflow.set_entry_point("intent_node")
         workflow.add_edge("intent_node", "fetch_data_node")
         workflow.add_edge("fetch_data_node", "audit_logic_node")
         workflow.add_edge("audit_logic_node", "report_node")
         workflow.add_edge("report_node", END)
-
         return workflow.compile(checkpointer=self.checkpointer)
 
     def intent_node(self, state: AuditState) -> Dict:
-        new_logs = list(state.logs) if state.logs else []
-        new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 启动审计: {state.company_name}")
-        return {"logs": new_logs}
+        return {"logs": [f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 开始审计: {state.company_name}"]}
 
     def fetch_data_node(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🔍 正在从互联网获取实时财报数据...")
-        
         try:
             from tavily import TavilyClient
             tavily = TavilyClient(api_key=self.tavily_api_key)
-            query = f"{state.company_name} 2023 2024 2025 财报 营收 利润 (revenue net income)"
+            # 强化搜索词，确保搜到具体数字
+            query = f"{state.company_name} latest financial results revenue net income 2023 2024"
             search_res = tavily.search(query=query, search_depth="advanced", max_results=5)
             
+            results = search_res.get('results', [])
             return {
-                "raw_data": {"search_results": search_res.get('results', []), "answer": search_res.get('answer', '')},
-                "logs": new_logs + [f"✅ 成功检索到 {len(search_res.get('results', []))} 篇财报来源"]
+                "raw_data": {"search_results": results},
+                "logs": new_logs + [f"✅ 找到 {len(results)} 条实时财报资讯"]
             }
         except Exception as e:
             return {"logs": new_logs + [f"⚠️ 搜索失败: {str(e)}"]}
 
     def audit_logic_node(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🤖 AI 正在深度解析财务指标并生成评分...")
-        
         try:
             from openai import OpenAI
             client = OpenAI(api_key=self.openai_api_key, base_url="https://open.bigmodel.cn/api/paas/v4/")
             
-            context = str(state.raw_data.get("search_results", ""))
-            prompt = f"""你是一名资深审计师。请分析 {state.company_name} 的财务数据。
-            1. 提取 2023, 2024, 2025 的营收(revenue)和净利润(net_income)。
-            2. 根据数据质量和财务表现给出一个 0-100 的综合健康分(overall_score)。
+            # 提取搜索到的文本内容
+            context = "\n".join([f"Source: {r.get('content')}" for r in state.raw_data.get("search_results", [])])
             
-            必须返回如下严格的 JSON 格式：
+            prompt = f"""你是一名专业的财务审计师。请从以下搜索内容中提取 {state.company_name} 真实财务数据。
+            
+            注意：
+            1. 严禁使用虚假数据或提示词中的示例数据。
+            2. 如果搜索内容中没有具体数字，请根据已知信息进行估算，并在 reason 中说明。
+            3. 返回 2022, 2023, 2024 的数据。
+            
+            必须严格返回此 JSON 格式：
             {{
-              "overall_score": 85,
-              "years": {{
-                "2023": {{"revenue": 100, "net_income": 10}},
-                "2024": {{"revenue": 120, "net_income": 15}},
-                "2025": {{"revenue": 150, "net_income": 25}}
-              }}
+              "overall_score": 75,
+              "reason": "基于最新财报分析...",
+              "financials": [
+                {{"year": "2022", "revenue": 123.4, "profit": 12.3}},
+                {{"year": "2023", "revenue": 150.5, "profit": 15.6}},
+                {{"year": "2024", "revenue": 180.2, "profit": 20.1}}
+              ]
             }}
-            内容：{context[:3500]}"""
+            
+            搜索到的参考内容：
+            {context[:4000]}"""
             
             response = client.chat.completions.create(
                 model="glm-4.6v",
@@ -109,86 +97,56 @@ class AuditEngine:
             )
             
             res_json = json.loads(response.choices[0].message.content)
-            extracted_years = res_json.get("years", {})
+            logger.info(f"AI Raw Response: {res_json}") # 在终端查看 AI 到底给没给真数据
 
-            # ✅ 动态生成前端图表需要的格式
-            chart_data = []
-            for year in sorted(extracted_years.keys()):
-                val = extracted_years[year]
-                chart_data.append({
-                    "year": year,
-                    "revenue": val.get("revenue", 0),
-                    "profit": val.get("net_income", 0) # 前端 Recharts 对应的是 profit 字段
-                })
-
-            # ✅ 构造符合前端要求的 metrics 结构
+            # 格式化给前端
+            chart_data = res_json.get("financials", [])
+            
             metrics = {
                 "health": {
-                    "overall": res_json.get("overall_score", 80),
+                    "overall": res_json.get("overall_score", 0),
                     "status": "healthy" if res_json.get("overall_score", 0) > 70 else "warning",
                     "anomaly_count": 0
                 },
-                "details": extracted_years
+                "reason": res_json.get("reason", "")
             }
 
             return {
                 "metrics": metrics,
-                "charts": {"profit_chart": {"data": chart_data}}, 
-                "logs": new_logs + ["✅ 财务指标与动态图表数据生成完毕"]
+                "charts": {"profit_chart": {"data": chart_data}},
+                "logs": new_logs + ["✅ 实时财务指标提取完成"]
             }
         except Exception as e:
-            logger.error(f"AI Node Error: {e}")
             return {"logs": new_logs + [f"❌ AI 分析出错: {str(e)}"]}
 
     def report_node(self, state: AuditState) -> Dict:
-        """生成文字报告并汇总结果"""
-        metrics = state.metrics.get('health', {})
-        details = state.metrics.get('details', {})
+        metrics = state.metrics
+        charts = state.charts.get("profit_chart", {}).get("data", [])
         
-        report_text = f"# {state.company_name} 数字化审计报告\n\n"
-        report_text += f"**综合评分：{metrics.get('overall', 'N/A')}分**\n\n"
-        report_text += "### 📈 年度财务摘要\n"
-        
-        if not details:
-            report_text += "未提取到有效年度数据。\n"
-        else:
-            for year, values in details.items():
-                report_text += f"- **{year}年**：营业收入 {values.get('revenue', 'N/A')}，净利润 {values.get('net_income', 'N/A')}\n"
-        
-        report_text += f"\n> 结论：审计流程于 {datetime.now().strftime('%Y-%m-%d %H:%M')} 完成，数据已同步至可视化仪表盘。"
-
+        report = f"# {state.company_name} 审计简报\n\n"
+        report += f"**审计结论**：{metrics.get('reason', '完成深度扫描')}\n\n"
+        report += "### 📊 提取到的关键数据\n"
+        for item in charts:
+            report += f"- **{item['year']}年**：营收 {item['revenue']}亿，利润 {item['profit']}亿\n"
+            
         return {
-            "raw_data": {"report_content": report_text}, # 存入 raw_data 供 run_audit 读取
-            "logs": state.logs + ["✅ 报告封装完毕"]
+            "metrics_details": report, # 统一传给这个字段
+            "logs": state.logs + ["✅ 审计报告已生成"]
         }
 
     def run_audit(self, company_name: str) -> Dict:
-        initial_input = {
-            "company_name": company_name,
-            "raw_data": {},
-            "metrics": {},
-            "charts": {},
-            "logs": [f"[{datetime.now().strftime('%H:%M:%S')}] 初始化状态"]
-        }
+        initial_input = {"company_name": company_name, "logs": []}
         try:
             final_output = self.workflow.invoke(
                 initial_input,
-                config=RunnableConfig(configurable={"thread_id": f"audit-{datetime.now().timestamp()}"})
+                config=RunnableConfig(configurable={"thread_id": "temp"})
             )
-            
-            # 从 report_node 结果中提取生成的报告文本
-            report_content = final_output.get("raw_data", {}).get("report_content", "暂无报告正文")
-
             return {
                 "status": "success",
                 "metrics": final_output.get('metrics', {}),
-                "charts": final_output.get('charts', {}), 
+                "charts": final_output.get('charts', {}),
                 "logs": final_output.get('logs', []),
-                "metrics_details": report_content # 给前端文本区域显示
+                "metrics_details": final_output.get('metrics_details', "")
             }
         except Exception as e:
-            return {"status": "error", "error": str(e), "logs": [str(e)]}
-
-if __name__ == "__main__":
-    engine = AuditEngine()
-    print(json.dumps(engine.run_audit("Tesla"), indent=2, ensure_ascii=False))
+            return {"status": "error", "logs": [str(e)]}
