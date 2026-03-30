@@ -2,14 +2,21 @@ import os
 import uvicorn
 
 if __name__ == "__main__":
-    # 强制设置 API Key 防止丢失
-    os.environ['TAVILY_API_KEY'] = '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'
+    # 1. 动态获取端口，这能解决 Railway 的连接问题
+    port = int(os.getenv("PORT", 8000))
     
-    # 使用字符串 "src.main:app" 启动，这是避免全家桶式导入报错的最佳方案
+    # 2. ✨ 核心修改：因为 main.py 在 src 文件夹里
+    # 所以路径必须写成 "src.main:app"
+    app_path = "src.main:app" 
+
+    print(f"🚀 服务器正在从 {app_path} 启动，端口: {port}")
+    
     uvicorn.run(
-        "src.main:app",
+        app_path,
         host="0.0.0.0",
-        port=8000,
-        reload=False, # 生产环境关闭 reload
-        log_level="info"
+        port=port,
+        reload=False,
+        log_level="info",
+        proxy_headers=True,     # 必须开启：解决 Railway 代理导致的 SSE 断连
+        forwarded_allow_ips="*" # 必须开启：允许所有来源的代理头
     )
