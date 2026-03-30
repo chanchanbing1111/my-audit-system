@@ -14,28 +14,44 @@ class SSEStreamer:
 
     async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
         try:
-            # 1. 运行审计引擎获取结果
+            # 1. 发送“开始”日志，让前端知道在动了
+            yield {
+                "event": "message",
+                "data": json.dumps({"type": "log", "content": f"🔍 正在启动审计引擎: {company_name}..."})
+            }
+
+            # 2. 执行审计（最耗时的一步）
             result = self.engine.run_audit(company_name)
             
-            # 2. ✨ 关键：必须把审计结果发给前端！
-            # 我们给它打上 type: 'log' 的标签，这样前端 handleSSEMessage 就能认出它是文字内容
+            # 3. 发送过程日志（让前端左侧的日志栏跳动）
+            if "logs" in result:
+                for log in result["logs"]:
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({"type": "log", "content": log})
+                    }
+
+            # 4. ✨ 核心修改：发送数据给前端的图表和面板
+            # 对应前端的 case 'metrics'
             yield {
-                "event": "message",  # 使用默认 message 事件，前端 onmessage 就能接到
+                "event": "message",
                 "data": json.dumps({
-                    "type": "log", 
-                    "content": result  # 这里放真正的审计分析文字
+                    "type": "metrics",
+                    "metrics": result.get("metrics", {}),  # 这里包含健康度指标
+                    "charts": result.get("charts", {}),    # 如果你有图表数据
+                    "metrics_details": result.get("metrics_details", {})
                 })
             }
             
-            # 3. 发送完成信号
+            # 5. 发送完成信号
             yield {
-                "event": "complete", 
+                "event": "complete",
                 "data": json.dumps({"success": True, "company": company_name})
             }
             
         except Exception as e:
             yield {
-                "event": "error", 
+                "event": "message",
                 "data": json.dumps({"type": "error", "message": str(e)})
             }
 @router.get("/audit")
