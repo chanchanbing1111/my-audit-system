@@ -3,8 +3,7 @@ import asyncio
 import os
 from typing import AsyncGenerator
 from fastapi import APIRouter, HTTPException
-from sse_starlette import EventSourceResponse
-from fastapi.concurrency import run_in_threadpool
+from sse_starlette.sse import EventSourceResponse
 from src.audit_engine import AuditEngine
 
 router = APIRouter()
@@ -16,57 +15,66 @@ class SSEStreamer:
 
     async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
         try:
-            # 1. 🚀 立即发送：撑开水管，告诉 VPN 这不是空连接
-            yield {
-                "event": "message", 
-                "data": json.dumps({"type": "log", "content": "📡 已连接审计服务器，正在启动 AI..."})
-            }
-
-            # 2. ⚡ 异步处理：把耗时的 AI 审计丢到后台去跑
-            # 这样主程序才能腾出手来不停地发“心跳”
-            task = asyncio.create_task(run_in_threadpool(self.engine.run_audit, company_name))
-
-            # 3. ❤️ 心跳循环：只要 AI 没算完，每 4 秒发一个状态，防止断连
-            counter = 0
-            while not task.done():
-                counter += 4
-                yield {
-                    "event": "message", 
-                    "data": json.dumps({"type": "log", "content": f"⏳ AI 正在深度分析中（已耗时 {counter}s）..."})
-                }
-                await asyncio.sleep(4) # 每 4 秒跳一次
-
-            # 4. 🎁 获取结果：AI 算完了，拿取数据
-            result = await task
-            
-            # 5. 📝 发送过程日志
-            if "logs" in result:
-                for log in result["logs"]:
-                    yield {"event": "message", "data": json.dumps({"type": "log", "content": log})}
-
-            # 6. 📊 发送数据给前端图表
+            # 1. 🚀 建立连接：立即告知前端已连接
             yield {
                 "event": "message",
-                "data": json.dumps({
-                    "type": "metrics",
-                    "metrics": result.get("metrics", {}),
-                    "charts": result.get("charts", {}),
-                    "metrics_details": result.get("metrics_details", {})
-                })
+                "data": json.dumps({"type": "log", "content": "📡 已连接审计服务器，正在启动 AI 审计流..."})
             }
+
+            # 2. ⚡ 核心逻辑：直接遍历 LangGraph 的异步流 (astream)
+            # 这会实时捕获每个节点的 logs，从而驱动前端进度条点亮
+            initial_input = {"company_name": company_name, "logs": []}
             
-            # 7. ✅ 成功结束
-            yield {"event": "complete", "data": json.dumps({"success": True})}
+            # 使用 astream 模式运行
+            async for event in self.engine.workflow.astream(initial_input, stream_mode="updates"):
+                for node_name, node_data in event.items():
+                    
+                    # A. 发送过程日志 (用于驱动前端 getWorkflowSteps 进度条)
+                    if "logs" in node_data:
+                        # 每次产生新日志，立即推送到前端
+                        # 前端收到一条 log，进度条就会自动 +1
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({
+                                "type": "log", 
+                                "content": node_data["logs"][-1]
+                            })
+                        }
+                        # 稍微停顿，让前端动画有节奏感
+                        await asyncio.sleep(0.4)
+
+                    # B. 发送财务指标和图表数据 (通常在 audit_logic_node 产生)
+                    if "metrics" in node_data:
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({
+                                "type": "metrics",
+                                "metrics": node_data.get("metrics", {}),
+                                "charts": node_data.get("charts", {}),
+                                # 兼容字段
+                                "metrics_details": node_data.get("metrics_details", "")
+                            })
+                        }
+
+            # 3. ✅ 成功结束：发送 complete 事件告知前端关闭 EventSource
+            yield {
+                "event": "complete", 
+                "data": json.dumps({"success": True})
+            }
 
         except Exception as e:
-            # 发生任何错误都发给前端
-            yield {"event": "message", "data": json.dumps({"type": "error", "content": f"审计异常: {str(e)}"})}
+            # 发生任何错误都发给前端显示
+            yield {
+                "event": "message", 
+                "data": json.dumps({"type": "error", "content": f"审计异常: {str(e)}"})
+            }
 
-@router.get("/audit/")
+@router.get("/audit")  # 注意：前端计算的路径是 /api/v1/audit，确保 prefix 正确
 async def stream_audit(company_name: str):
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name required")
     streamer = SSEStreamer()
+    # 返回 EventSourceResponse 供前端 EventSource 订阅
     return EventSourceResponse(streamer.stream_workflow(company_name))
 
 @router.get("/health")
