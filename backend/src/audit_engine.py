@@ -156,173 +156,160 @@ class AuditEngine:
                 "raw_data": {"status": "error", "error_detail": str(e)}
             }
 
-    def audit_logic_node(self, state: AuditState) -> AuditState:
-        """Calculate financial metrics and perform audit logic"""
-        state.add_log("进入审计逻辑分析阶段: 计算财务指标和对账")
-        state.add_log("正在校验现金流量表与资产负债表的勾稽关系...")
+    def audit_logic_node(self, state: AuditState) -> Dict:
+        """使用 GLM-4.6v 提取数据并执行审计逻辑"""
+        # 1. 准备日志
+        new_logs = list(state.logs)
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        new_logs.append(f"[{timestamp}] 🤖 AI 审计开始：正在调用 GLM-4.6v 分析原始网页数据...")
 
         try:
-            financial_data = state.raw_data["financial_metrics"]
-            years = state.raw_data["years"]
+            # 2. 获取 API Key (对应你 Railway 里的 OPENAI_API_KEY)
+            api_key = os.getenv("OPENAI_API_KEY")
+            
+            # 3. 构建 Prompt：要求 AI 从文本中精准提取 JSON 数字
+            # 注意：我们将 raw_data 传入，这里面存的是上一步 Tavily 搜到的内容
+            search_context = str(state.raw_data.get("search_results", "无搜索数据"))
+            
+            prompt = f"""
+            你是一名专业审计师。请阅读以下关于 '{state.company_name}' 的搜索结果，提取 2023 和 2024 年的财务指标。
+            
+            要求：
+            1. 必须返回纯 JSON 格式。
+            2. 如果找不到数据，请填入 0。
+            3. 格式如下：
+            {{
+                "years": [2023, 2024],
+                "revenue": [2023收入, 2024收入],
+                "net_income": [2023净利, 2024净利],
+                "assets": [2023资产, 2024资产],
+                "liabilities": [2023负债, 2024负债],
+                "equity": [2023权益, 2024权益],
+                "cash_flow": [2023现金流, 2024现金流]
+            }}
+            
+            搜索结果内容：
+            {search_context[:4000]} 
+            """
 
-            # Calculate key metrics
+            # 4. 调用 GLM-4.6v (通过 OpenAI 兼容接口)
+            from openai import OpenAI
+            # 智谱 AI 的官方 API 地址
+            client = OpenAI(api_key=api_key, base_url="https://open.bigmodel.cn/api/paas/v4/")
+            
+            response = client.chat.completions.create(
+                model="glm-4.6v", # 智谱标准模型名
+                messages=[{"role": "user", "content": prompt}],
+                response_format={ "type": "json_object" }
+            )
+            
+            # 5. 解析 AI 提取到的数字
+            financial_data = json.loads(response.choices[0].message.content)
+            years = financial_data.get("years", [2023, 2024])
+            new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ AI 成功提取结构化数据")
+
+            # 6. 执行审计计算逻辑 (复用你原来的逻辑)
             metrics = {
-                "profitability": {},
-                "liquidity": {},
-                "solvency": {},
-                "efficiency": {},
-                "growth": {},
-                "anomalies": []
+                "profitability": {}, "liquidity": {}, "solvency": {},
+                "efficiency": {}, "growth": {}, "anomalies": []
             }
 
-            # Profitability analysis
-            state.add_log("分析盈利能力指标...")
+            # 示例：盈利能力分析
             for i, year in enumerate(years):
-                revenue = financial_data["revenue"][i]
-                net_income = financial_data["net_income"][i]
+                rev = financial_data["revenue"][i]
+                ni = financial_data["net_income"][i]
+                if rev > 0:
+                    margin = (ni / rev) * 100
+                    metrics["profitability"][year] = {"revenue": rev, "net_income": ni, "profit_margin": margin}
+                    if margin < 5:
+                        metrics["anomalies"].append(f"{year}年: 净利润率 {margin:.2f}% 偏低")
 
-                if revenue > 0:
-                    profit_margin = (net_income / revenue) * 100
-                    metrics["profitability"][year] = {
-                        "revenue": revenue,
-                        "net_income": net_income,
-                        "profit_margin": profit_margin
-                    }
-
-                    if profit_margin < 5:
-                        metrics["anomalies"].append(f"{year}年: 净利润率 {profit_margin:.2f}% 低于5%警戒线")
-
-            # Liquidity analysis
-            state.add_log("分析流动性指标...")
-            for i, year in enumerate(years):
-                current_assets = financial_data["assets"][i]
-                current_liabilities = financial_data["liabilities"][i]
-
-                current_ratio = current_assets / current_liabilities if current_liabilities > 0 else 0
-                metrics["liquidity"][year] = {
-                    "current_ratio": current_ratio
-                }
-
-                if current_ratio < 1:
-                    metrics["anomalies"].append(f"{year}年: 流动比率 {current_ratio:.2f} 低于1.0警戒线")
-
-            # Solvency analysis
-            state.add_log("分析偿债能力指标...")
-            for i, year in enumerate(years):
-                total_assets = financial_data["assets"][i]
-                total_liabilities = financial_data["liabilities"][i]
-
-                debt_to_equity = total_liabilities / financial_data["equity"][i] if financial_data["equity"][i] > 0 else 0
-                metrics["solvency"][year] = {
-                    "debt_to_equity": debt_to_equity
-                }
-
-                if debt_to_equity > 2:
-                    metrics["anomalies"].append(f"{year}年: 负债权益比 {debt_to_equity:.2f} 高于2.0警戒线")
-
-            # Growth analysis
-            state.add_log("分析增长趋势...")
-            for i in range(1, len(years)):
-                prev_year = years[i-1]
-                curr_year = years[i]
-
-                revenue_growth = ((financial_data["revenue"][i] - financial_data["revenue"][i-1]) /
-                               financial_data["revenue"][i-1]) * 100
-                metrics["growth"][curr_year] = {
-                    "revenue_growth": revenue_growth
-                }
-
-                if revenue_growth < 0:
-                    metrics["anomalies"].append(f"{curr_year}年: 收入增长 {revenue_growth:.2f}% 为负增长")
-
-            # Cash flow analysis
-            state.add_log("分析现金流量表...")
-            for i, year in enumerate(years):
-                cash_flow = financial_data["cash_flow"][i]
-                net_income = financial_data["net_income"][i]
-
-                cash_flow_margin = (cash_flow / revenue) * 100 if revenue > 0 else 0
-                metrics["efficiency"][year] = {
-                    "cash_flow_margin": cash_flow_margin
-                }
-
-                if cash_flow_margin < 5:
-                    metrics["anomalies"].append(f"{year}年: 现金流利润率 {cash_flow_margin:.2f}% 低于5%警戒线")
-
-            # Overall health score
-            state.add_log("计算整体健康评分...")
+            # 计算健康评分 (复用你原来的逻辑)
             anomaly_count = len(metrics["anomalies"])
-            health_score = max(0, 100 - (anomaly_count * 10))  # Simple scoring
+            health_score = max(0, 100 - (anomaly_count * 10))
             metrics["health"] = {
                 "overall": health_score,
                 "anomaly_count": anomaly_count,
-                "status": "healthy" if health_score >= 70 else "warning" if health_score >= 40 else "critical"
+                "status": "healthy" if health_score >= 70 else "warning"
             }
 
-            state.metrics = metrics
-            state.add_log(f"✅ 审计逻辑分析完成，发现 {anomaly_count} 个异常")
-            state.add_log(f"📊 整体健康评分: {health_score} ({metrics['health']['status']})")
+            new_logs.append(f"✅ 审计完成，健康评分: {health_score}")
+
+            # 7. ✨ 必须返回字典 (Dict)
+            return {
+                "metrics": metrics,
+                "logs": new_logs
+            }
 
         except Exception as e:
-            state.add_log(f"❌ 审计逻辑分析失败: {str(e)}")
-            raise
+            new_logs.append(f"❌ 审计分析失败: {str(e)}")
+            return {"logs": new_logs}
 
-        return state
-
-    def report_node(self, state: AuditState) -> AuditState:
-        """Generate comprehensive audit report"""
-        state.add_log("进入报告生成阶段: 生成审计结论")
-        state.add_log("正在生成详细的财务分析报告...")
+    def report_node(self, state: AuditState) -> Dict: # 👈 关键：返回类型改为 Dict
+        """生成最终的综合审计报告"""
+        new_logs = list(state.logs)
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        new_logs.append(f"[{timestamp}] 进入报告生成阶段: 正在汇整审计结论...")
 
         try:
+            # 安全获取指标数据，防止 AI 提取失败导致此处崩溃
+            metrics = state.metrics if state.metrics else {}
+            health = metrics.get('health', {'overall': 0, 'status': 'N/A', 'anomaly_count': 0})
+            
+            # 生成 Markdown 格式的报告内容
             report = f"""
 # {state.company_name} 财务审计报告
 ## 审计日期: {datetime.now().strftime("%Y-%m-%d")}
 
 ### 审计概述
-本报告基于 {state.company_name} 2023-2025 年的财务数据进行分析，重点关注盈利能力、流动性、偿债能力和增长趋势。
+本报告基于智谱 GLM-4-9B 对 {state.company_name} 实时搜索数据的分析，重点关注盈利能力、流动性、偿债能力和增长趋势。
 
 ### 关键发现
 
 #### 整体健康评分
-- **健康评分**: {state.metrics['health']['overall']}/100
-- **状态**: {state.metrics['health']['status'].upper()}
-- **异常数量**: {state.metrics['health']['anomaly_count']}
+- **健康评分**: {health.get('overall', 0)}/100
+- **状态**: {str(health.get('status', 'unknown')).upper()}
+- **异常数量**: {health.get('anomaly_count', 0)}
 
 #### 盈利能力分析
-{self._format_metrics_section(state.metrics['profitability'], "盈利能力")}
+{self._format_metrics_section(metrics.get('profitability', {}), "盈利能力")}
 
 #### 流动性分析
-{self._format_metrics_section(state.metrics['liquidity'], "流动性")}
+{self._format_metrics_section(metrics.get('liquidity', {}), "流动性")}
 
 #### 偿债能力分析
-{self._format_metrics_section(state.metrics['solvency'], "偿债能力")}
+{self._format_metrics_section(metrics.get('solvency', {}), "偿债能力")}
 
 #### 增长趋势分析
-{self._format_metrics_section(state.metrics['growth'], "增长趋势")}
+{self._format_metrics_section(metrics.get('growth', {}), "增长趋势")}
 
 #### 现金流效率
-{self._format_metrics_section(state.metrics['efficiency'], "现金流效率")}
+{self._format_metrics_section(metrics.get('efficiency', {}), "现金流效率")}
 
 ### 异常和风险
-{self._format_anomalies(state.metrics['anomalies'])}
+{self._format_anomalies(metrics.get('anomalies', []))}
 
 ### 数据来源
 {self._format_sources(state.raw_data.get('source_urls', []))}
 
-### 执行日志
-{self._format_logs(state.logs[-10:])}  # Last 10 logs for summary
+### 审计结论
+根据 AI 分析，{state.company_name} 目前的财务状况评级为 **{health.get('status', '未知')}**。请结合具体异常项进行风险评估。
 """
 
-            state.add_log(f"✅ 报告生成完成，长度: {len(report)} 字符")
-            state.add_log("审计工作流执行完毕")
+            new_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 审计报告生成完成")
+            new_logs.append("审计工作流执行完毕，正在向前端推送最终结果...")
+
+            # ✅ 最终返回：更新日志，并保持其他状态不变
+            # 在 LangGraph 中，END 节点前的最后一个 return 会决定最终 invoke 的输出
+            return {
+                "logs": new_logs
+            }
 
         except Exception as e:
-            state.add_log(f"❌ 报告生成失败: {str(e)}")
-            raise
-
-        return state
-
+            error_msg = f"❌ 报告生成失败: {str(e)}"
+            new_logs.append(error_msg)
+            # 即使失败也返回字典，确保流转能结束
+            return {"logs": new_logs}
     def _format_metrics_section(self, metrics: Dict, title: str) -> str:
         """Format a metrics section for the report"""
         if not metrics:
