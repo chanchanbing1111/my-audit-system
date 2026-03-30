@@ -14,16 +14,20 @@ class SSEStreamer:
 
     async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
         try:
-            # 1. 发送“开始”日志，让前端知道在动了
+            # 🚀 第一步：立即发报，防止浏览器超时报错
             yield {
                 "event": "message",
-                "data": json.dumps({"type": "log", "content": f"🔍 正在启动审计引擎: {company_name}..."})
+                "data": json.dumps({"type": "log", "content": f"🚀 正在连接审计服务器..."})
+            }
+            yield {
+                "event": "message",
+                "data": json.dumps({"type": "log", "content": f"📊 目标确认：{company_name}，正在检索财报..."})
             }
 
-            # 2. 执行审计（最耗时的一步）
+            # 🛠 第二步：执行耗时任务（AI 搜索和分析）
             result = self.engine.run_audit(company_name)
             
-            # 3. 发送过程日志（让前端左侧的日志栏跳动）
+            # 📝 第三步：发送 AI 运行过程中的所有日志
             if "logs" in result:
                 for log in result["logs"]:
                     yield {
@@ -31,28 +35,28 @@ class SSEStreamer:
                         "data": json.dumps({"type": "log", "content": log})
                     }
 
-            # 4. ✨ 核心修改：发送数据给前端的图表和面板
-            # 对应前端的 case 'metrics'
+            # 📈 第四步：发送核心指标（对应前端的 case 'metrics'）
             yield {
                 "event": "message",
                 "data": json.dumps({
                     "type": "metrics",
-                    "metrics": result.get("metrics", {}),  # 这里包含健康度指标
-                    "charts": result.get("charts", {}),    # 如果你有图表数据
+                    "metrics": result.get("metrics", {}),
+                    "charts": result.get("charts", {}),
                     "metrics_details": result.get("metrics_details", {})
                 })
             }
             
-            # 5. 发送完成信号
+            # ✅ 第五步：发送完成信号
             yield {
                 "event": "complete",
                 "data": json.dumps({"success": True, "company": company_name})
             }
             
         except Exception as e:
+            # 如果中间断了，也要告诉前端原因
             yield {
                 "event": "message",
-                "data": json.dumps({"type": "error", "message": str(e)})
+                "data": json.dumps({"type": "error", "content": f"审计中断: {str(e)}"})
             }
 @router.get("/audit/")
 async def stream_audit(company_name: str):
