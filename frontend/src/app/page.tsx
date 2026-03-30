@@ -81,20 +81,22 @@ export default function AuditApp() {
   const handleSSEMessage = (data: any, msgId: number) => {
     switch (data.type) {
       case 'start':
-        // 开始事件，可以在这里初始化数据
         break;
 
       case 'log':
-        // 更新日志
+        // ✨ 修改：处理后端发来的 content (可能是字符串或对象)
+        const displayContent = typeof data.content === 'object' 
+          ? JSON.stringify(data.content, null, 2) 
+          : (data.content || data.message); // 兼容 content 或 message 字段
+
         setMessages(prev => prev.map(msg =>
           msg.id === msgId
-            ? { ...msg, logs: [...(msg.logs || []), data.message] }
+            ? { ...msg, logs: [...(msg.logs || []), displayContent] }
             : msg
         ));
         break;
 
       case 'metrics':
-        // 更新指标和图表数据
         setMessages(prev => prev.map(msg =>
           msg.id === msgId
             ? {
@@ -108,16 +110,19 @@ export default function AuditApp() {
         break;
 
       case 'complete':
-        // 完成事件
         setIsTyping(false);
+        // 如果后端在 complete 里也带了最终数据，可以在这里处理
         if (data.success) {
-          setActiveTabMap(prev => ({ ...prev, [msgId]: 'profit' }));
+          setActiveTabMap(prev => ({ ...prev, [msgId.toString()]: 'profit' }));
         }
         break;
 
       case 'error':
-        // 错误事件
-        setError(data.message);
+        // ✨ 修改：同样兼容对象格式的错误信息
+        const errorMessage = typeof data.message === 'object' 
+          ? JSON.stringify(data.message) 
+          : data.message;
+        setError(errorMessage);
         setIsTyping(false);
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
