@@ -46,11 +46,25 @@ export default function AuditApp() {
     setStage('chat');
     setIsTyping(true);
 
+    // 1. 获取基础 URL
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const url = `${apiUrl}/api/v1/audit?company_name=${encodeURIComponent(query)}`;
+    
+    // 2. 移除末尾可能存在的斜杠，防止拼接出 //
+    const cleanedApiUrl = apiUrl.replace(/\/$/, "");
+
+    // 3. 智能拼接：检查环境变量是否已经包含了 /api/v1
+    // 如果包含了，就直接用；如果不包含，才手动加上 /api/v1
+    const finalBaseUrl = cleanedApiUrl.includes('/api/v1') 
+        ? cleanedApiUrl 
+        : `${cleanedApiUrl}/api/v1`;
+
+    // 4. 生成最终请求地址
+    const url = `${finalBaseUrl}/audit?company_name=${encodeURIComponent(query)}`;
+    
+    // 打印出来检查，你可以在浏览器 F12 控制台看到这个路径是否正确
+    console.log("🚀 正在请求后端地址:", url);
     
     const source = new EventSource(url);
-
     source.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
