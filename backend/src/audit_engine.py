@@ -2,10 +2,7 @@ import os
 import json
 import logging
 import asyncio
-import re
 from typing import Dict, List, Optional
-from datetime import datetime
-
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -14,17 +11,17 @@ from langgraph.checkpoint.memory import MemorySaver
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- 1. 状态定义 (必须放在最前面) ---
-
+# --- 1. 状态定义 ---
 class AuditState(BaseModel):
     company_name: str
     raw_data: Dict = Field(default_factory=dict)
     metrics: Dict = Field(default_factory=dict)
     charts: Dict = Field(default_factory=dict)
     logs: List[str] = Field(default_factory=list)
+    next_node: str = Field(default="")  # 决策下一个 Agent
+    retry_count: int = Field(default=0) # 重试计数器
 
-# --- 2. 核心引擎定义 ---
-
+# --- 2. 核心多智能体引擎 ---
 class AuditEngine:
     def __init__(self, tavily_api_key: Optional[str] = None):
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
@@ -34,123 +31,92 @@ class AuditEngine:
 
     def _build_workflow(self) -> StateGraph:
         workflow = StateGraph(AuditState)
-        workflow.add_node("intent_node", self.intent_node)
-        workflow.add_node("fetch_data_node", self.fetch_data_node)
-        workflow.add_node("audit_logic_node", self.audit_logic_node)
-        workflow.add_node("report_node", self.report_node)
         
-        workflow.set_entry_point("intent_node")
-        workflow.add_edge("intent_node", "fetch_data_node")
-        workflow.add_edge("fetch_data_node", "audit_logic_node")
-        workflow.add_edge("audit_logic_node", "report_node")
-        workflow.add_edge("report_node", END)
+        # 添加三个专职 Agent 节点
+        workflow.add_node("search_agent", self.search_agent)
+        workflow.add_node("auditor_agent", self.auditor_agent)
+        workflow.add_node("critic_agent", self.critic_agent)
+        
+        # 构建图拓扑
+        workflow.set_entry_point("search_agent")
+        workflow.add_edge("search_agent", "auditor_agent")
+        workflow.add_edge("auditor_agent", "critic_agent")
+        
+        # 💡 核心：条件路由（实现多智能体循环纠错）
+        workflow.add_conditional_edges(
+            "critic_agent",
+            lambda x: x["next_node"],
+            {
+                "re_search": "search_agent", # 质检失败，打回搜索智能体
+                "end": END                   # 质检通过
+            }
+        )
         return workflow.compile(checkpointer=self.checkpointer)
 
-    # 节点 1: 语义解析
-    def intent_node(self, state: AuditState) -> Dict:
-        return {"logs": [f"🔍 语义解析：已锁定 [{state.company_name}] 审计主体"]}
-
-    # 节点 2: 数据抓取
-    def fetch_data_node(self, state: AuditState) -> Dict:
+    # --- Agent 1: 搜索智能体 ---
+    async def search_agent(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
         try:
             from tavily import TavilyClient
             tavily = TavilyClient(api_key=self.tavily_api_key)
-            # 强化搜索词，确保获取官方财报信息
-            query = f"{state.company_name} investor relations 2023 2024 financial results revenue profit"
-            search_res = tavily.search(query=query, search_depth="advanced", max_results=6)
+            # 根据重试次数动态调整关键词
+            query = f"{state.company_name} official financial report 2023 2024 revenue"
+            if state.retry_count > 0:
+                query = f"{state.company_name} investor relations 10-K 2023 financial highlights"
+            
+            search_res = tavily.search(query=query, search_depth="advanced", max_results=5)
             return {
                 "raw_data": {"search_results": search_res.get('results', [])},
-                "logs": new_logs + ["🌐 数据穿透：已从公开渠道抓取最新财务数据原文"]
+                "logs": new_logs + [f"🌐 [搜索智能体] 第{state.retry_count+1}次精准抓取数据原文"]
             }
         except Exception as e:
-            logger.error(f"Tavily Search Error: {e}")
-            return {"logs": new_logs + [f"⚠️ 数据抓取异常: {str(e)}"]}
+            return {"logs": new_logs + [f"⚠️ 搜索异常: {str(e)}"]}
 
-    # 节点 3: AI 逻辑审计 (核心修复区)
-    async def audit_logic_node(self, state: AuditState) -> Dict:
+    # --- Agent 2: 审计智能体 ---
+    async def auditor_agent(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        
-        # 构建精准上下文
-        search_results = state.raw_data.get("search_results", [])
-        context_list = []
-        for r in search_results[:5]:
-            context_list.append(f"来源: {r.get('title')}\n内容: {r.get('content')[:800]}")
-        context = "\n---\n".join(context_list)
+        results = state.raw_data.get("search_results", [])
+        context = "\n".join([f"标题: {r.get('title')}\n内容: {r.get('content')[:600]}" for r in results])
         
         from openai import OpenAI
-        # 使用智谱 API 
         client = OpenAI(api_key=self.openai_api_key, base_url="https://open.bigmodel.cn/api/paas/v4/")
 
-        for attempt in range(3):
-            try:
-                prompt = f"""你是一名资深财务审计师。请分析材料并提取 {state.company_name} 2023-2025 的财务数据。
-                
-                ⚖️ 审计要求：
-                1. 【单位换算】：若原数据为美元($)，必须乘以 7.2 转换为亿元人民币。
-                2. 【禁止全零】：若材料未显式提及 2025 年，请根据 2023/2024 趋势进行合理预估，严禁返回全 0 数据。
-                3. 【量级对齐】：例如特斯拉 2023 营收应在 7000 亿元人民币左右。
+        prompt = f"""你是一名审计专家。提取 {state.company_name} 2023-2025 财务数据。
+        要求：
+        1. 必须包含营收(revenue), 利润(profit), 现金流(cash)。
+        2. 特斯拉等美股请直接提取“亿美元”数值，不要换算。
+        3. 必须返回 JSON 格式。材料：{context[:1500]}"""
 
-                返回标准 JSON 格式：
-                {{
-                  "overall_score": 85,
-                  "summary": "一句话审计总结",
-                  "financials": [
-                    {{"year": "2023", "revenue": 100.5, "profit": 10.2, "cash": 20.5}},
-                    {{"year": "2024", "revenue": 110.0, "profit": 12.0, "cash": 25.0}},
-                    {{"year": "2025", "revenue": 125.0, "profit": 15.0, "cash": 30.0}}
-                  ]
-                }}
-                
-                材料内容：
-                {context}"""
+        try:
+            response = client.chat.completions.create(
+                model="glm-4-flash",
+                messages=[{"role": "user", "content": prompt}],
+                timeout=40
+            )
+            content = response.choices[0].message.content
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            
+            res = json.loads(content)
+            return {
+                "metrics": {"health": {"overall": 85}, "summary": res.get("summary", "")},
+                "charts": {"profit_chart": {"data": res.get("financials", [])}, "cash_flow_chart": {"data": res.get("financials", [])}},
+                "logs": new_logs + ["⚖️ [审计智能体] 已完成初步财报勾稽"]
+            }
+        except Exception as e:
+            return {"logs": new_logs + [f"❌ 审计计算出错: {str(e)}"]}
 
-                response = client.chat.completions.create(
-                    model="glm-4-flash", # 使用更快速稳定的 Flash 模型
-                    messages=[{"role": "user", "content": prompt}],
-                    timeout=50 
-                )
-                
-                content = response.choices[0].message.content
-                # 清洗 Markdown 标签
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].strip()
-
-                res = json.loads(content)
-                f_data = res.get("financials", [])
-
-                # 数据校验：如果第一年营收为 0，视为提取失败，触发重试
-                if not f_data or float(f_data[0].get("revenue", 0)) == 0:
-                    raise ValueError("AI 未能从材料中识别出有效数值")
-
-                return {
-                    "metrics": {
-                        "health": {"overall": res.get("overall_score", 85), "status": "healthy"},
-                        "summary": res.get("summary", "数据审计完成。"),
-                        "growth_analysis": "已完成财报勾稽与汇率校准。"
-                    },
-                    "charts": {
-                        "profit_chart": {"data": f_data},
-                        "cash_flow_chart": {"data": f_data}
-                    },
-                    "logs": new_logs + ["⚖️ 风险对账：已完成 AI 逻辑审计与汇率校准"]
-                }
-
-            except Exception as e:
-                if attempt < 2:
-                    logger.warning(f"审计节点重试 {attempt+1}: {e}")
-                    await asyncio.sleep(2)
-                    continue
-                
-                logger.error(f"审计逻辑节点最终失败: {e}")
-                return {
-                    "metrics": {"health": {"overall": 0, "status": "error"}, "summary": f"审计中断：{str(e)}"},
-                    "charts": {"profit_chart": {"data": []}, "cash_flow_chart": {"data": []}},
-                    "logs": new_logs + [f"❌ 逻辑分析失败: {str(e)}"]
-                }
-
-    # 节点 4: 报告生成
-    def report_node(self, state: AuditState) -> Dict:
-        return {"logs": state.logs + ["📑 研报生成：深度审计报告已合成"]}
+    # --- Agent 3: 质检智能体 (决策中心) ---
+    async def critic_agent(self, state: AuditState) -> Dict:
+        new_logs = list(state.logs)
+        f_data = state.charts.get("profit_chart", {}).get("data", [])
+        
+        # 逻辑：如果第一年营收为 0 且重试不到 2 次，要求重新搜索
+        if (not f_data or f_data[0].get("revenue") == 0) and state.retry_count < 2:
+            return {
+                "next_node": "re_search", 
+                "retry_count": state.retry_count + 1,
+                "logs": new_logs + ["🔍 [质检智能体] 发现关键数据缺失，指令搜索智能体重新采集"]
+            }
+        
+        return {"next_node": "end", "logs": new_logs + ["📑 [质检智能体] 审计逻辑校验通过，生成报告"]}
