@@ -55,14 +55,14 @@ class AuditEngine:
 
     # --- Agent 1: 搜索智能体 ---
     async def search_agent(self, state: AuditState) -> Dict:
-        new_logs = list(state.logs)
+        new_logs = list(state.logs) # ✅ 正确：点号访问
         try:
             from tavily import TavilyClient
             tavily = TavilyClient(api_key=self.tavily_api_key)
-            # 根据重试次数动态调整关键词
-            query = f"{state.company_name} official financial report 2023 2024 revenue"
+            # 使用 state.retry_count 而不是 state['retry_count']
+            query = f"{state.company_name} official financial report 2023"
             if state.retry_count > 0:
-                query = f"{state.company_name} investor relations 10-K 2023 financial highlights"
+                query = f"{state.company_name} investor relations 2023 10-K"
             
             search_res = tavily.search(query=query, search_depth="advanced", max_results=5)
             return {
@@ -72,44 +72,26 @@ class AuditEngine:
         except Exception as e:
             return {"logs": new_logs + [f"⚠️ 搜索异常: {str(e)}"]}
 
-   # --- Agent 2: 审计智能体 (修正点：state 访问方式) ---
+    # --- Agent 2: 审计智能体 ---
     async def auditor_agent(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        # 注意：这里使用 state.raw_data 而不是 state['raw_data']
+        # ✅ 正确：使用 state.raw_data
         results = state.raw_data.get("search_results", [])
-        context = "\n".join([f"标题: {r.get('title')}\n内容: {r.get('content')[:600]}" for r in results])
+        context = "\n".join([f"内容: {r.get('content')[:500]}" for r in results])
         
         from openai import OpenAI
         client = OpenAI(api_key=self.openai_api_key, base_url="https://open.bigmodel.cn/api/paas/v4/")
 
-        prompt = f"""你是一名审计专家。提取 {state.company_name} 2023-2025 财务数据。
-        要求：
-        1. 包含营收(revenue), 利润(profit), 现金流(cash)。
-        2. 特斯拉等美股直接提取“亿美元”，比亚迪等A股提取“亿元”。
-        3. 必须返回纯 JSON，严禁输出任何解释文字。
-        材料：{context[:1500]}"""
+        prompt = f"提取 {state.company_name} 2023-2025 财务数据 JSON... 材料：{context[:1500]}"
 
         try:
             response = client.chat.completions.create(
                 model="glm-4-flash",
-                messages=[{"role": "user", "content": prompt}],
-                timeout=40
+                messages=[{"role": "user", "content": prompt}]
             )
-            content = response.choices[0].message.content
-            
-            # 强化 JSON 清洗逻辑
-            json_str = content
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                json_str = content.split("```")[1].strip()
-            
-            # 移除 JSON 中可能存在的非法字符（如中文逗号或数字千分位逗号）
-            json_str = json_str.replace("，", ",").replace(",\n}", "\n}") 
-
-            res = json.loads(json_str)
+            res = json.loads(response.choices[0].message.content.replace("```json", "").replace("```", ""))
             return {
-                "metrics": {"health": {"overall": 85}, "summary": res.get("summary", "数据提取完成")},
+                "metrics": {"health": {"overall": 85}, "summary": res.get("summary", "")},
                 "charts": {
                     "profit_chart": {"data": res.get("financials", [])}, 
                     "cash_flow_chart": {"data": res.get("financials", [])}
@@ -117,26 +99,20 @@ class AuditEngine:
                 "logs": new_logs + ["⚖️ [审计智能体] 已完成初步财报勾稽"]
             }
         except Exception as e:
-            logger.error(f"审计解析失败: {str(e)}")
-            return {"logs": new_logs + [f"❌ 审计数据格式化失败，尝试重新修正"]}
+            return {"logs": new_logs + [f"❌ 审计数据格式化失败: {str(e)}"]}
 
-    # --- Agent 3: 质检智能体 (修正点：使用 state.charts) ---
+    # --- Agent 3: 质检智能体 ---
     async def critic_agent(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        # 修正：使用点号访问属性
+        # ✅ 关键修正：使用 state.charts.get(...)
         f_data = state.charts.get("profit_chart", {}).get("data", [])
         
-        # 逻辑：如果数据为空或营收为0，触发重试
-        is_data_invalid = not f_data or len(f_data) == 0 or float(f_data[0].get("revenue", 0)) == 0
-        
-        if is_data_invalid and state.retry_count < 2:
+        # 逻辑判断：如果数据为空或第一年营收为0
+        if (not f_data or float(f_data[0].get("revenue", 0)) == 0) and state.retry_count < 2:
             return {
                 "next_node": "re_search", 
                 "retry_count": state.retry_count + 1,
-                "logs": new_logs + ["🔍 [质检智能体] 发现关键数据异常，打回重新采集"]
+                "logs": new_logs + ["🔍 [质检智能体] 结果不合格，打回重搜"]
             }
         
-        return {
-            "next_node": "end", 
-            "logs": new_logs + ["📑 [质检智能体] 审计逻辑校验通过，推送报表"]
-        }
+        return {"next_node": "end", "logs": new_logs + ["📑 [质检智能体] 校验通过"]}
