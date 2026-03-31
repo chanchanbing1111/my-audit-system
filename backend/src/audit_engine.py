@@ -76,7 +76,7 @@ class AuditEngine:
                 材料：{context}"""
 
                 response = client.chat.completions.create(
-                    model="glm-4.6v",
+                    model="glm-4-flash",
                     messages=[{"role": "user", "content": prompt}],
                     # ⚡ 减负 3：去掉 response_format 提高生成速度
                     timeout=60 # 缩短到 60 秒，如果 60 秒不出说明链路有问题，直接重试
