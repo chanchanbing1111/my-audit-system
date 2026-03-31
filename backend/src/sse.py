@@ -2,11 +2,14 @@ import json
 import asyncio
 import os
 import uuid
+import logging
 from typing import AsyncGenerator
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 from src.audit_engine import AuditEngine
 
+# 初始化日志，方便在 Railway 查看
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 class SSEStreamer:
@@ -16,41 +19,43 @@ class SSEStreamer:
 
     async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
         try:
-            # 1. 🚀 建立连接
+            # 1. 🚀 建立连接阶段
             yield {
                 "event": "message",
                 "data": json.dumps({"type": "log", "content": "📡 已连接审计服务器，正在启动 AI 审计流..."})
             }
 
-            # 2. ⚡ 核心修复：LangGraph 必须要求提供 configurable 包含 thread_id
-            # 这里的 config 结构必须严格遵守 LangGraph 要求
+            # 2. ⚙️ 配置线程
             config = {
                 "configurable": {
-                    "thread_id": str(uuid.uuid4()) # 为每次审计生成唯一的线程ID
+                    "thread_id": str(uuid.uuid4()) 
                 }
             }
             
-            initial_input = {"company_name": company_name, "logs": []}
+            # 初始化输入
+            initial_input = {"company_name": company_name, "logs": [], "raw_data": {}}
             
-            # 使用 astream 模式运行
+            # 3. ⚡ 异步运行 LangGraph
+            # 使用 astream 模式，这是处理长耗时 AI 任务的最佳方式
             async for event in self.engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
                 for node_name, node_data in event.items():
                     
-                    # A. 发送过程日志 (用于点亮前端 4 个步骤)
-                    if "logs" in node_data:
+                    # A. 健壮的日志发送逻辑
+                    if "logs" in node_data and node_data["logs"]:
+                        # 始终发送最后一条最新日志
+                        latest_log = node_data["logs"][-1]
                         yield {
                             "event": "message",
                             "data": json.dumps({
                                 "type": "log", 
-                                "content": node_data["logs"][-1]
+                                "content": latest_log
                             })
                         }
-                        # 给前端动画留出时间
-                        await asyncio.sleep(0.5)
-
-                    # B. 发送财务指标和图表数据
-                    if "metrics" in node_data:
-                        # 确保发送给前端的数据包含 summary 字段
+                    
+                    # B. 核心财务数据发送
+                    # 当 audit_logic_node 完成时，node_data 会包含 metrics 和 charts
+                    if "metrics" in node_data or node_name == "audit_logic_node":
+                        logger.info(f"📊 节点 {node_name} 已完成，正在推送财务指标包")
                         yield {
                             "event": "message",
                             "data": json.dumps({
@@ -61,16 +66,15 @@ class SSEStreamer:
                             })
                         }
 
-            # 3. ✅ 成功结束
+            # 4. ✅ 成功结束
             yield {
                 "event": "complete", 
                 "data": json.dumps({"success": True})
             }
 
         except Exception as e:
-            # 捕获并向前端发送错误
-            error_msg = f"审计异常: {str(e)}"
-            print(f"Error detail: {error_msg}") # 服务端打印调试
+            error_msg = f"❌ 审计流异常: {str(e)}"
+            logger.error(f"SSE Streaming Error: {error_msg}")
             yield {
                 "event": "message", 
                 "data": json.dumps({"type": "error", "content": error_msg})
@@ -80,9 +84,15 @@ class SSEStreamer:
 async def stream_audit(company_name: str):
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name required")
+    
     streamer = SSEStreamer()
-    return EventSourceResponse(streamer.stream_workflow(company_name))
+    # 💡 关键：ping=20 维持心跳，避免网关超时；send_timeout 设置为足够长
+    return EventSourceResponse(
+        streamer.stream_workflow(company_name),
+        ping=20,
+        send_timeout=300 # 允许最长 5 分钟的审计过程
+    )
 
 @router.get("/health")
 async def health_check():
-    return {"status": "healthy", "engine": "ready"}
+    return {"status": "healthy"}
