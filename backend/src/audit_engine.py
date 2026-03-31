@@ -76,7 +76,7 @@ class AuditEngine:
                         "content": f"你是一名资深审计师。请从材料中提取 {state.company_name} 2023-2025 的营收、利润、现金流（单位:亿元/100M）。若无2025数据请基于趋势预估。必须返回JSON，包含overall_score(int), summary(str), financials(list: year, revenue, profit, cash)。材料如下：\n{context}"
                     }],
                     response_format={ "type": "json_object" },
-                    timeout=60
+                    timeout=120
                 )
                 
                 # 打印 Token 消耗，方便在 Railway 日志里监控真实性
