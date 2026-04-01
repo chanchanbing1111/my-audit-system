@@ -59,26 +59,63 @@ export default function AuditApp() {
         : `${cleanedApiUrl}/api/v1`;
 
     // 4. 生成最终请求地址
-    const url = `${finalBaseUrl}/audit?company_name=${encodeURIComponent(query)}`;
+    const handleSend = (text?: string) => {
+    const query = text || inputValue;
+    if (!query.trim()) return;
+
+    const msgId = Date.now();
+    const newAssistantMsgId = msgId + 1;
+
+    setMessages(prev => [
+      ...prev, 
+      { id: msgId, role: 'user', content: query },
+      { 
+        id: newAssistantMsgId, 
+        role: 'assistant', 
+        content: query, 
+        logs: [], 
+        step: 0, 
+        metrics: null, 
+        loading: true 
+      } 
+    ]);
+
+    setInputValue('');
+    setStage('chat');
+    setIsTyping(true);
+
+    // --- 核心修改部分：跳过 Vercel 代理，直连 Railway ---
     
-    // 打印出来检查，你可以在浏览器 F12 控制台看到这个路径是否正确
-    console.log("🚀 正在请求后端地址:", url);
+    // 1. 定义你的 Railway 后端公网地址
+    const RAILWAY_BACKEND_URL = "https://my-audit-system-production.up.railway.app";
     
+    // 2. 拼接最终请求地址（确保包含 /api/v1 路径）
+    const url = `${RAILWAY_BACKEND_URL}/api/v1/audit?company_name=${encodeURIComponent(query)}`;
+    
+    console.log("🚀 正在直连 Railway 后端（绕过 Vercel 超时限制）:", url);
+    
+    // 3. 建立 SSE 连接
     const source = new EventSource(url);
+
     source.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         handleSSEMessage(data, newAssistantMsgId);
-      } catch (e) { console.error(e); }
+      } catch (e) { 
+        console.error("解析数据失败:", e); 
+      }
     };
 
     source.addEventListener('complete', () => {
+      console.log("✅ 审计任务圆满完成");
       setIsTyping(false);
       source.close();
     });
 
-    source.onerror = () => {
-      setError('审计服务器连接超时');
+    source.onerror = (err) => {
+      console.error("SSE 错误详情:", err);
+      // 如果你已经充值但仍报错，检查 Railway 日志是否有 429 或 Timeout
+      setError('审计服务器响应异常或 AI 额度不足');
       setIsTyping(false);
       source.close();
     };
