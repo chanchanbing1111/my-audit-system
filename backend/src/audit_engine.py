@@ -121,7 +121,7 @@ class AuditEngine:
 
         try:
             response = self.client.chat.completions.create(
-                model="glm-4v", 
+                model="glm-4.6v", 
                 messages=[{"role": "user", "content": prompt}]
             )
             res = safe_extract_json(response.choices[0].message.content)
