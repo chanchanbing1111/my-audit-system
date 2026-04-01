@@ -26,8 +26,19 @@ async def event_generator(company_name: str):
     try:
         engine = get_engine()
         
-        # 1. 发送初始日志
-        yield {"event": "message", "data": json.dumps({"type": "log", "content": f"🔍 已锁定目标：{company_name}，正在调度多智能体集群..."})}
+        # 1. 🚀 强力续命：在启动耗时任务前，连续发送预热日志
+        # 每一行 yield 都会重置 Vercel 和浏览器的 15 秒倒计时
+        warmup_logs = [
+            f"📡 正在建立 2026 安全审计加密隧道...",
+            f"🔎 正在向数据中心申请 {company_name} 2023-2025 财报访问权限...",
+            f"🧠 正在调度分布式审计智能体节点 (Node: {str(uuid.uuid4())[:8]})...",
+            f"📊 正在初始化多年度勾稽关系算法，准备深度侦测..."
+        ]
+        
+        for log in warmup_logs:
+            yield {"event": "message", "data": json.dumps({"type": "log", "content": log})}
+            # 每隔 1 秒发一条，确保在前 5 秒内连接非常“活跃”
+            await asyncio.sleep(1)
 
         # 2. 准备 LangGraph 输入
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
@@ -39,19 +50,17 @@ async def event_generator(company_name: str):
         }
 
         # 3. 运行真实的 Graph 逻辑
-        # 💡 注意：加上具体的异常捕获，防止某个节点报错导致整个流断开
         async for event in engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
             for node_name, node_data in event.items():
-                # 发送节点日志
+                # 发送节点产生的真实日志
                 if "logs" in node_data and node_data["logs"]:
-                    # 再次强调：剔除换行符防止 0xd 错误
                     msg = str(node_data["logs"][-1]).replace("\n", " ").replace("\r", " ")
                     yield {
                         "event": "message", 
                         "data": json.dumps({"type": "log", "content": f"[{node_name}] {msg}"})
                     }
                 
-                # 发送财务指标数据
+                # 发送财务指标
                 if "metrics" in node_data and node_data.get("metrics"):
                     yield {
                         "event": "message",
@@ -67,14 +76,12 @@ async def event_generator(company_name: str):
         yield {"event": "complete", "data": json.dumps({"success": True})}
 
     except Exception as e:
-        # 如果中间报错，通过 SSE 发送具体错误堆栈，方便我们最后微调
         import traceback
         logger.error(traceback.format_exc())
         yield {
             "event": "message", 
             "data": json.dumps({"type": "log", "content": f"❌ 审计中断: {str(e)}"})
         }
-
 @router.get("/audit")
 async def stream_audit(request: Request, company_name: str):
     if not company_name:
