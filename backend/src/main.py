@@ -3,6 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
 import sys
+# 屏蔽第三方库的冗余日志，防止其混入 SSE 数据流
+logging.getLogger("openai").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
