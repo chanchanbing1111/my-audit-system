@@ -22,42 +22,30 @@ class SSEStreamer:
         self.engine = AuditEngine(tavily_api_key=tavily_key)
 
     # 修改 stream_workflow 函数内部
+# src/sse.py
+
 async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
     try:
-        # 1. 立即发送握手信号
-        yield {
-            "event": "message", 
-            "data": json.dumps({"type": "log", "content": "🚀 审计智能体集群已就绪，启动深度侦测..."})
-        }
+        # 先发一个握手信号，确认函数进来了
+        yield {"event": "message", "data": json.dumps({"type": "log", "content": "🚀 审计逻辑启动..."})}
+        
+        # 💡 在这里增加一个极其详细的初始化检查
+        if not os.getenv('TAVILY_API_KEY'):
+            raise ValueError("环境变量 TAVILY_API_KEY 缺失")
 
+        # 启动 Graph
         async for event in self.engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
-            for node_name, node_data in event.items():
-                # 2. 只有当节点真的产生 logs 时才发送
-                if "logs" in node_data and node_data["logs"]:
-                    # 取最后一条日志，并强制剔除换行符 \n 和 \r
-                    raw_log = str(node_data["logs"][-1])
-                    clean_log = raw_log.replace("\n", " ").replace("\r", " ").strip()
-                    
-                    yield {
-                        "event": "message",
-                        "data": json.dumps({"type": "log", "content": f"[{node_name}] {clean_log}"})
-                    }
-                
-                # 3. 发送指标数据
-                if "metrics" in node_data and node_data.get("metrics"):
-                    yield {
-                        "event": "message",
-                        "data": json.dumps({
-                            "type": "metrics",
-                            "metrics": node_data["metrics"],
-                            "charts": node_data.get("charts", {})
-                        })
-                    }
+            # ... 原有逻辑
+            pass
+
     except Exception as e:
-        # 捕获异常并包装成 JSON，防止异常堆栈直接打碎 SSE 流
+        # 💥 关键修复：不要让程序崩溃，把错误变成消息发给前端
+        import traceback
+        error_stack = traceback.format_exc()
+        print(f"ERROR STACK: {error_stack}") # 这行会强行打入 Railway 日志
         yield {
             "event": "message", 
-            "data": json.dumps({"type": "log", "content": f"⚠️ 智能体通信波动: {str(e)}"})
+            "data": json.dumps({"type": "log", "content": f"❌ 内部崩溃: {str(e)}"})
         }
 @router.get("/audit")
 async def stream_audit(company_name: str):
