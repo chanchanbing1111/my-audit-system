@@ -99,15 +99,20 @@ async def stream_audit(company_name: str):
     streamer = SSEStreamer()
     
     # 💡 核心修改：增加 headers 解决 Railway/Nginx 缓存导致的 SSE 不实时输出
+   # 在 sse.py 中修改返回部分
     return EventSourceResponse(
         streamer.stream_workflow(company_name),
-        ping=15, # 每15秒发一个心跳包，防止云端负载均衡器断开长连接
+        ping=15, 
         send_timeout=600,
         headers={
-            "X-Accel-Buffering": "no",  # 必须！禁用 Nginx 缓存，确保日志逐条跳出
-            "Cache-Control": "no-cache",
+            # 1. 核心修复：禁止代理服务器对数据进行任何压缩或转换
+            "Cache-Control": "no-cache, no-transform", 
+            # 2. 确保不被 Nginx 缓存
+            "X-Accel-Buffering": "no",  
             "Connection": "keep-alive",
             "Content-Type": "text/event-stream",
+            # 3. 显式指定编码，防止中文乱码干扰协议
+            "Content-Encoding": "none", 
         }
     )
 
