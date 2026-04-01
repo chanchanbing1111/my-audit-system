@@ -23,21 +23,56 @@ def get_engine():
 
 async def event_generator(company_name: str):
     try:
-        # 1. 立即尝试获取引擎
         engine = get_engine()
         
-        # 2. 发送初始心跳
-        yield {"event": "message", "data": json.dumps({"type": "log", "content": "🚀 引擎已就绪..."})}
-        
-        # ... 你的 initial_input 和 astream 逻辑 ...
-        # 注意：在这里先写一个最简单的测试循环，确认 SSE 能跑通
-        for i in range(3):
-            yield {"event": "message", "data": json.dumps({"type": "log", "content": f"正在准备数据 ({i+1})..."}) }
-            await asyncio.sleep(1)
+        # 1. 发送初始日志
+        yield {"event": "message", "data": json.dumps({"type": "log", "content": f"🔍 已锁定目标：{company_name}，正在调度多智能体集群..."})}
+
+        # 2. 准备 LangGraph 输入
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        initial_input = {
+            "company_name": company_name,
+            "logs": [],
+            "raw_data": {},
+            "retry_count": 0
+        }
+
+        # 3. 运行真实的 Graph 逻辑
+        # 💡 注意：加上具体的异常捕获，防止某个节点报错导致整个流断开
+        async for event in engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
+            for node_name, node_data in event.items():
+                # 发送节点日志
+                if "logs" in node_data and node_data["logs"]:
+                    # 再次强调：剔除换行符防止 0xd 错误
+                    msg = str(node_data["logs"][-1]).replace("\n", " ").replace("\r", " ")
+                    yield {
+                        "event": "message", 
+                        "data": json.dumps({"type": "log", "content": f"[{node_name}] {msg}"})
+                    }
+                
+                # 发送财务指标数据
+                if "metrics" in node_data and node_data.get("metrics"):
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({
+                            "type": "metrics",
+                            "metrics": node_data["metrics"],
+                            "charts": node_data.get("charts", {}),
+                            "details": f"核定节点: {node_name}"
+                        })
+                    }
+
+        # 4. 流程结束
+        yield {"event": "complete", "data": json.dumps({"success": True})}
 
     except Exception as e:
-        logger.error(f"STREAM ERROR: {str(e)}")
-        yield {"event": "message", "data": json.dumps({"type": "error", "content": str(e)})}
+        # 如果中间报错，通过 SSE 发送具体错误堆栈，方便我们最后微调
+        import traceback
+        logger.error(traceback.format_exc())
+        yield {
+            "event": "message", 
+            "data": json.dumps({"type": "log", "content": f"❌ 审计中断: {str(e)}"})
+        }
 
 @router.get("/audit")
 async def stream_audit(request: Request, company_name: str):
