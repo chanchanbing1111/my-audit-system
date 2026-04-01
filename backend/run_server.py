@@ -19,4 +19,5 @@ if __name__ == "__main__":
         log_level="info",
         proxy_headers=True,     # 必须开启：解决 Railway 代理导致的 SSE 断连
         forwarded_allow_ips="*" # 必须开启：允许所有来源的代理头
+        timeout_keep_alive=65
     )
