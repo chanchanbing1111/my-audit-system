@@ -21,76 +21,44 @@ class SSEStreamer:
             logger.warning("⚠️ TAVILY_API_KEY is not set!")
         self.engine = AuditEngine(tavily_api_key=tavily_key)
 
-    async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
-        try:
-            # 1. 🚀 建立连接 - 立即发送第一条消息确认通道开启
-            yield {
-                "event": "message",
-                "data": json.dumps({"type": "log", "content": "📡 已成功连接至 2026 智能审计云端..."})
-            }
+    # 修改 stream_workflow 函数内部
+async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
+    try:
+        # 1. 立即发送握手信号
+        yield {
+            "event": "message", 
+            "data": json.dumps({"type": "log", "content": "🚀 审计智能体集群已就绪，启动深度侦测..."})
+        }
 
-            config = {
-                "configurable": {
-                    "thread_id": str(uuid.uuid4()) 
-                },
-                "recursion_limit": 20 # 防止多智能体陷入死循环
-            }
-            
-            initial_input = {
-                "company_name": company_name, 
-                "logs": [], 
-                "raw_data": {},
-                "retry_count": 0
-            }
-            
-            # 2. ⚡ 异步流式运行多智能体图
-            # 使用 astream 的 updates 模式获取每个节点的输出
-            async for event in self.engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
-                # 兼容性处理：防止 EventSourceResponse 因为长时间无数据而断开
-                # 每收到一个节点信号，我们都主动 yield 一个保持连接的消息（虽然 EventSourceResponse 有 ping）
+        async for event in self.engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
+            for node_name, node_data in event.items():
+                # 2. 只有当节点真的产生 logs 时才发送
+                if "logs" in node_data and node_data["logs"]:
+                    # 取最后一条日志，并强制剔除换行符 \n 和 \r
+                    raw_log = str(node_data["logs"][-1])
+                    clean_log = raw_log.replace("\n", " ").replace("\r", " ").strip()
+                    
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({"type": "log", "content": f"[{node_name}] {clean_log}"})
+                    }
                 
-                for node_name, node_data in event.items():
-                    logger.info(f"🤖 智能体节点完成: {node_name}")
-                    
-                    # A. 实时发送过程日志
-                    # 优化：如果 logs 列表很长，只取最后一条新增的
-                    if "logs" in node_data and node_data["logs"]:
-                        latest_log = node_data["logs"][-1]
-                        yield {
-                            "event": "message",
-                            "data": json.dumps({
-                                "type": "log", 
-                                "content": latest_log
-                            })
-                        }
-                    
-                    # B. 发送最终指标数据
-                    if "metrics" in node_data and node_data.get("metrics"):
-                        yield {
-                            "event": "message",
-                            "data": json.dumps({
-                                "type": "metrics",
-                                "metrics": node_data.get("metrics", {}),
-                                "charts": node_data.get("charts", {}),
-                                "node": node_name
-                            })
-                        }
-
-            # 3. ✅ 显式发送流程彻底结束的信号
-            yield {
-                "event": "complete", 
-                "data": json.dumps({"success": True, "message": "审计报告生成完毕"})
-            }
-
-        except Exception as e:
-            error_msg = f"❌ 审计系统异常: {str(e)}"
-            logger.error(f"SSE Runtime Error: {error_msg}")
-            # 发送错误信息给前端展示
-            yield {
-                "event": "message", 
-                "data": json.dumps({"type": "error", "content": error_msg})
-            }
-
+                # 3. 发送指标数据
+                if "metrics" in node_data and node_data.get("metrics"):
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({
+                            "type": "metrics",
+                            "metrics": node_data["metrics"],
+                            "charts": node_data.get("charts", {})
+                        })
+                    }
+    except Exception as e:
+        # 捕获异常并包装成 JSON，防止异常堆栈直接打碎 SSE 流
+        yield {
+            "event": "message", 
+            "data": json.dumps({"type": "log", "content": f"⚠️ 智能体通信波动: {str(e)}"})
+        }
 @router.get("/audit")
 async def stream_audit(company_name: str):
     if not company_name:
