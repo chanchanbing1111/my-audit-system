@@ -1,6 +1,7 @@
 import json
 import asyncio
 import os
+import uuid
 import logging
 from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
