@@ -43,8 +43,8 @@ def safe_extract_json(text: str) -> Dict:
 
 # --- 2. 核心多智能体引擎 ---
 class AuditEngine:
-    def __init__(self, tavily_api_key: Optional[str] = None):
-        self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
+    def __init__(self, exa_api_key: Optional[str] = None):
+        self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.client = OpenAI(
             api_key=self.openai_api_key,
@@ -82,7 +82,7 @@ class AuditEngine:
 
         try:
             from exa_py import Exa
-            exa = Exa(api_key=self.tavily_api_key)  # 复用 tavily_api_key 字段存 EXA_API_KEY
+            exa = Exa(api_key=self.exa_api_key)
             search_res = exa.search_and_contents(
                 query=base_query,
                 num_results=8,
