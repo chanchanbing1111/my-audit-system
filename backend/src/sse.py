@@ -21,10 +21,10 @@ _engine = None
 def get_engine():
     global _engine
     if _engine is None:
-        api_key = os.getenv('TAVILY_API_KEY')
+        api_key = os.getenv('EXA_API_KEY')
         if not api_key:
-            raise ValueError("TAVILY_API_KEY is missing in environment variables")
-        _engine = AuditEngine(tavily_api_key=api_key)
+            raise ValueError("EXA_API_KEY is missing in environment variables")
+        _engine = AuditEngine(exa_api_key=api_key)
     return _engine
 
 
