@@ -75,17 +75,28 @@ class AuditEngine:
     # --- Agent 1: 搜索智能体 ---
     async def search_agent(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        base_query = f"{state.company_name} 2023-2025 财报 Annual Report 营收 利润 ROE"
+        base_query = f"{state.company_name} 2023-2025 财报 Annual Report 营收 利润 ROE financial results"
 
         if state.retry_count > 0:
-            base_query = f"{state.company_name} 2022-2024 官方财报数据 10-K report"
+            base_query = f"{state.company_name} 2022-2024 官方财报数据 10-K report financial"
 
         try:
-            from tavily import TavilyClient
-            tavily = TavilyClient(api_key=self.tavily_api_key)
-            search_res = tavily.search(query=base_query, search_depth="advanced", max_results=8)
+            from exa_py import Exa
+            exa = Exa(api_key=self.tavily_api_key)  # 复用 tavily_api_key 字段存 EXA_API_KEY
+            search_res = exa.search_and_contents(
+                query=base_query,
+                num_results=8,
+                type="auto"
+            )
+            # Exa 返回格式转换，适配后续 auditor_agent
+            results = []
+            for item in (search_res.results or []):
+                results.append({
+                    "url": item.url,
+                    "content": getattr(item, 'text', '')[:600]
+                })
             return {
-                "raw_data": {"search_results": search_res.get('results', [])},
+                "raw_data": {"search_results": results},
                 "logs": new_logs + [f"🌐 [搜索智能体] 检索目标: {base_query[:40]}..."]
             }
         except Exception as e:
