@@ -7,7 +7,7 @@ import json
 import re
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -30,7 +30,7 @@ class AuditState(BaseModel):
 
 
 # --- 工具函数：JSON 安全解析 ---
-def safe_extract_json(text: str) -> Dict:
+def safe_extract_json(text: str) -> Optional[Dict]:
     try:
         json_pattern = r"```json\s*(.*?)\s*```"
         match = re.search(json_pattern, text, re.DOTALL)
@@ -38,7 +38,7 @@ def safe_extract_json(text: str) -> Dict:
         return json.loads(clean_content.strip())
     except Exception as e:
         logger.error(f"JSON 解析异常: {e}")
-        return {}
+        return None
 
 
 # --- 2. 核心多智能体引擎 ---
@@ -150,8 +150,22 @@ class AuditEngine:
             )
             res = safe_extract_json(response.choices[0].message.content)
 
+            # JSON 解析失败，保留原数据不覆盖
+            if res is None:
+                return {
+                    "logs": new_logs + ["⚠️ [审计智能体] 解析失败，保留上次数据"]
+                }
+
             f_data = res.get("chart_data", [])
+            # 过滤掉无效年份
+            f_data = [item for item in f_data if item.get("year")]
             years = [item.get("year") for item in f_data]
+
+            # 如果新数据为空，保留上次的有效数据
+            if not f_data and state.charts.get("profit_chart", {}).get("data"):
+                return {
+                    "logs": new_logs + ["⚠️ [审计智能体] 新数据为空，保留上次审计结果"]
+                }
 
             return {
                 "metrics": {
@@ -175,17 +189,33 @@ class AuditEngine:
         new_logs = list(state.logs)
         f_data = state.charts.get("profit_chart", {}).get("data", [])
 
-        has_three_years = len(f_data) == 3
-        has_recent_data = any(item.get("year") in [2024, 2025] for item in f_data)
+        # 过滤出有有效数字的条目
+        valid_items = [
+            item for item in f_data
+            if item.get("year") and item.get("revenue") not in [None, "N/A", ""]
+        ]
 
-        if (not has_three_years or not has_recent_data) and state.retry_count < 1:
+        has_valid_numbers = len(valid_items) >= 1
+        has_recent_data = any(item.get("year") in [2024, 2025] for item in f_data)
+        has_three_years = len(f_data) == 3
+
+        # 有1年有效近期数据就直接通过，避免re_search失败导致数据全丢
+        if has_valid_numbers and has_recent_data:
+            return {
+                "next_node": "end",
+                "logs": new_logs + ["✅ [质检智能体] 数据有效，校验通过"]
+            }
+
+        # 数据不足且还有重试机会
+        if state.retry_count < 1:
             return {
                 "next_node": "re_search",
                 "retry_count": state.retry_count + 1,
                 "logs": new_logs + ["🔍 [质检智能体] 数据连续性不足，尝试扩大搜索范围追溯往年数据"]
             }
 
+        # 重试失败也保留已有数据，不再继续循环
         return {
             "next_node": "end",
-            "logs": new_logs + ["📑 [质检智能体] 财务逻辑及年份连续性校验通过"]
+            "logs": new_logs + ["⚠️ [质检智能体] 数据有限，接受当前结果"]
         }
