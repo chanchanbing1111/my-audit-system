@@ -48,7 +48,7 @@ class AuditEngine:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.client = OpenAI(
             api_key=self.openai_api_key,
-            base_url="https://open.bigmodel.cn/api/paas/v4/"
+            base_url="hhttps://api.moonshot.cn/v1"
         )
         self.checkpointer = MemorySaver()
         self.workflow = self._build_workflow()
@@ -145,7 +145,7 @@ class AuditEngine:
 
         try:
             response = self.client.chat.completions.create(
-                model="glm-4-flash",
+                model="kimi-k2.5",
                 messages=[{"role": "user", "content": prompt}]
             )
             res = safe_extract_json(response.choices[0].message.content)
