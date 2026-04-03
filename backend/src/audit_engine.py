@@ -107,9 +107,15 @@ class AuditEngine:
                     "content": getattr(item, 'text', '')[:2000]
                 })
 
+            # 空结果检测
+            if not results:
+                return {
+                    "logs": new_logs + ["⚠️ [搜索智能体] 未找到任何财报数据，请尝试更换公司名称或使用英文名"]
+                }
+
             return {
                 "raw_data": {"search_results": results},
-                "logs": new_logs + [f"🌐 [搜索智能体] 检索目标: {combined_query[:50]}..."]
+                "logs": new_logs + [f"🌐 [搜索智能体] 已检索到 {len(results)} 条材料: {combined_query[:50]}..."]
             }
         except Exception as e:
             return {"logs": new_logs + [f"⚠️ 搜索异常: {str(e)}"]}
