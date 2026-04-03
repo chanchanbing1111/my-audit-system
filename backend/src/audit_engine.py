@@ -83,8 +83,8 @@ class AuditEngine:
         else:
             year_list = [2022, 2023, 2024]
 
-        base_query = f"{state.company_name} 财报 巨潮资讯网 cninfo 营业收入 净利润 ROE"
-        annual_queries = " ".join([f"{state.company_name} {y}年报" for y in year_list])
+        base_query = f"{state.company_name} 年报 巨潮资讯网 营业收入 净利润"
+        annual_queries = " ".join([f"{y}年" for y in year_list])
 
         if state.retry_count > 0:
             new_logs += [f"🔄 [搜索智能体] 补充搜索往年数据..."]
