@@ -83,7 +83,9 @@ class AuditEngine:
         else:
             year_list = [2022, 2023, 2024]
 
-        base_query = f"{state.company_name} 年报 巨潮资讯网 营业收入 净利润"
+        # 优先搜巨潮资讯网的财务报表页面，数据结构化且完整
+        # 组合搜索：年报 + 财务报表页面，都从巨潮资讯网
+        base_query = f"{state.company_name} 巨潮资讯网 财务报表 年报 营业收入 净利润 {year_list[0]}-{year_list[-1]}"
         annual_queries = " ".join([f"{y}年" for y in year_list])
 
         if state.retry_count > 0:
