@@ -75,13 +75,18 @@ class AuditEngine:
     # --- Agent 1: 搜索智能体 ---
     async def search_agent(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        # 优先从巨潮资讯网找年报，数据最全
+
+        # 向前找最近三个已发布年报的财年
+        # 当前2026年，假设近三年年报最晚到2024（2025年报可能在发布中）
+        if state.retry_count == 0:
+            year_list = [2023, 2024, 2025]
+        else:
+            year_list = [2022, 2023, 2024]
+
         base_query = f"{state.company_name} 财报 巨潮资讯网 cninfo 营业收入 净利润 ROE"
-        annual_query = f"{state.company_name} 2023年报 2024年报 2025年报 年度报告 巨潮"
+        annual_queries = " ".join([f"{state.company_name} {y}年报" for y in year_list])
 
         if state.retry_count > 0:
-            base_query = f"{state.company_name} 2022-2024 年报 巨潮资讯网 净利润 营业收入"
-            annual_query = f"{state.company_name} 2022年报 2023年报 2024年报 巨潮 cninfo"
             new_logs += [f"🔄 [搜索智能体] 补充搜索往年数据..."]
 
         try:
@@ -90,7 +95,7 @@ class AuditEngine:
             results = []
 
             # 统一搜索：巨潮资讯网 + 年报关键词，覆盖各年份
-            combined_query = f"{base_query} | {annual_query}"
+            combined_query = f"{base_query} {annual_queries}"
             search_res = exa.search_and_contents(
                 query=combined_query,
                 num_results=10,
@@ -99,7 +104,7 @@ class AuditEngine:
             for item in (search_res.results or []):
                 results.append({
                     "url": item.url,
-                    "content": getattr(item, 'text', '')[:600]
+                    "content": getattr(item, 'text', '')[:2000]
                 })
 
             return {
@@ -114,7 +119,7 @@ class AuditEngine:
         new_logs = list(state.logs)
         results = state.raw_data.get("search_results", [])
         context = "\n".join([
-            f"来源:{r.get('url')}\n内容:{r.get('content')[:600]}"
+            f"来源:{r.get('url')}\n内容:{r.get('content')[:2000]}"
             for r in results
         ])
 
@@ -147,7 +152,7 @@ class AuditEngine:
   }}
 }}
 
-参考材料：{context[:3500]}
+参考材料：{context[:6000]}
 """
 
         try:
@@ -202,12 +207,14 @@ class AuditEngine:
             if item.get("year") and item.get("revenue") not in [None, "N/A", ""]
         ]
 
+        # 统计有多少年近期数据（至少需要2年才通过）
+        recent_years = [item for item in f_data if item.get("year") in [2024, 2025]]
+        has_enough_recent = len(recent_years) >= 2
         has_valid_numbers = len(valid_items) >= 1
-        has_recent_data = any(item.get("year") in [2024, 2025] for item in f_data)
         has_three_years = len(f_data) == 3
 
-        # 有1年有效近期数据就直接通过，避免re_search失败导致数据全丢
-        if has_valid_numbers and has_recent_data:
+        # 有2年有效近期数据才通过，避免数据不完整就结束
+        if has_valid_numbers and has_enough_recent:
             return {
                 "next_node": "end",
                 "logs": new_logs + ["✅ [质检智能体] 数据有效，校验通过"]
