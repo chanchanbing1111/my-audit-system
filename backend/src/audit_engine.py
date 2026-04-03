@@ -75,29 +75,36 @@ class AuditEngine:
     # --- Agent 1: 搜索智能体 ---
     async def search_agent(self, state: AuditState) -> Dict:
         new_logs = list(state.logs)
-        base_query = f"{state.company_name} 2023-2025 财报 Annual Report 营收 利润 ROE financial results"
+        # 优先从巨潮资讯网找年报，数据最全
+        base_query = f"{state.company_name} 财报 巨潮资讯网 cninfo 营业收入 净利润 ROE"
+        annual_query = f"{state.company_name} 2023年报 2024年报 2025年报 年度报告 巨潮"
 
         if state.retry_count > 0:
-            base_query = f"{state.company_name} 2022-2024 官方财报数据 10-K report financial"
+            base_query = f"{state.company_name} 2022-2024 年报 巨潮资讯网 净利润 营业收入"
+            annual_query = f"{state.company_name} 2022年报 2023年报 2024年报 巨潮 cninfo"
+            new_logs += [f"🔄 [搜索智能体] 补充搜索往年数据..."]
 
         try:
             from exa_py import Exa
             exa = Exa(api_key=self.exa_api_key)
+            results = []
+
+            # 统一搜索：巨潮资讯网 + 年报关键词，覆盖各年份
+            combined_query = f"{base_query} | {annual_query}"
             search_res = exa.search_and_contents(
-                query=base_query,
-                num_results=8,
+                query=combined_query,
+                num_results=10,
                 type="auto"
             )
-            # Exa 返回格式转换，适配后续 auditor_agent
-            results = []
             for item in (search_res.results or []):
                 results.append({
                     "url": item.url,
                     "content": getattr(item, 'text', '')[:600]
                 })
+
             return {
                 "raw_data": {"search_results": results},
-                "logs": new_logs + [f"🌐 [搜索智能体] 检索目标: {base_query[:40]}..."]
+                "logs": new_logs + [f"🌐 [搜索智能体] 检索目标: {combined_query[:50]}..."]
             }
         except Exception as e:
             return {"logs": new_logs + [f"⚠️ 搜索异常: {str(e)}"]}
