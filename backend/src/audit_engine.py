@@ -48,7 +48,7 @@ class AuditEngine:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.client = OpenAI(
             api_key=self.openai_api_key,
-            base_url="hhttps://api.moonshot.cn/v1"
+            base_url="https://api.moonshot.cn/v1"
         )
         self.checkpointer = MemorySaver()
         self.workflow = self._build_workflow()
