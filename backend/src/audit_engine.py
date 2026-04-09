@@ -141,7 +141,7 @@ class AuditEngine:
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
-                    model="kimi-k2.5",
+                    model="kimi-k2-turbo-preview",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 res = safe_extract_json(response.choices[0].message.content)
