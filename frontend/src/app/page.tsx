@@ -7,45 +7,31 @@ export default function AuditApp() {
   const [messages, setMessages] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'profit' | 'asset' | 'cash'>('profit');
   const [currentAgent, setCurrentAgent] = useState<string>('初始化...');
-  // 保存当前正在分析的公司名称
   const currentQueryRef = useRef<string>('');
-  // 保存 EventSource 实例，组件卸载时关闭
   const sourceRef = useRef<EventSource | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // 消息自动滚动
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-  // =====================================================
-  //  核心修复：使用 useEffect 统一管理 EventSource 生命周期
-  // =====================================================
   useEffect(() => {
-    // 只有在 chat 阶段且有查询内容时才建立连接
     if (stage !== 'chat' || !currentQueryRef.current) return;
     const query = currentQueryRef.current;
     const url = `https://my-audit-system-production.up.railway.app/api/v1/audit?company_name=${encodeURIComponent(query)}`;
-    // 关闭已有连接，防止重复
     if (sourceRef.current) {
       sourceRef.current.close();
     }
     const source = new EventSource(url);
     sourceRef.current = source;
-    // 找到当前 assistant 消息的 id（最后一条）
-    const assistantMsgId = Date.now() + 1;
     source.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'log') {
-          // 提取节点名称
           const agentName = data.content.match(/\[(.*?)\]/)?.[1] || '';
           if (agentName) setCurrentAgent(agentName);
           setMessages(prev => {
             const lastMsg = prev[prev.length - 1];
             if (lastMsg && lastMsg.role === 'assistant') {
-              return [
-                ...prev.slice(0, -1),
-                { ...lastMsg, logs: [...(lastMsg.logs || []), data.content] }
-              ];
+              return [...prev.slice(0, -1), { ...lastMsg, logs: [...(lastMsg.logs || []), data.content] }];
             }
             return prev;
           });
@@ -56,13 +42,7 @@ export default function AuditApp() {
             if (lastMsg && lastMsg.role === 'assistant') {
               return [
                 ...prev.slice(0, -1),
-                {
-                  ...lastMsg,
-                  // 防御性赋值，确保不会是 undefined
-                  metrics: data.metrics || {},
-                  charts: data.charts || {},
-                  loading: false
-                }
+                { ...lastMsg, metrics: data.metrics || {}, charts: data.charts || {}, loading: false }
               ];
             }
             return prev;
@@ -80,57 +60,48 @@ export default function AuditApp() {
       source.close();
       sourceRef.current = null;
     };
-    // =====================================================
-    //  清理函数：组件卸载或下次 useEffect 执行前调用
-    //  防止内存泄漏和多连接问题
-    // =====================================================
     return () => {
       if (sourceRef.current) {
         sourceRef.current.close();
         sourceRef.current = null;
       }
     };
-  }, [stage]); // stage 变化时重新执行
+  }, [stage]);
   const handleSend = (text?: string) => {
     const query = text || inputValue;
     if (!query.trim()) return;
-    // 关闭之前的连接（如果有）
     if (sourceRef.current) {
       sourceRef.current.close();
       sourceRef.current = null;
     }
-    // 保存当前查询，供 useEffect 读取
     currentQueryRef.current = query;
     const msgId = Date.now();
     const newAssistantMsgId = msgId + 1;
     setMessages(prev => [
       ...prev,
       { id: msgId, role: 'user', content: query },
-      {
-        id: newAssistantMsgId,
-        role: 'assistant',
-        content: query,
-        logs: [],
-        metrics: null,
-        charts: {},
-        loading: true
-      }
+      { id: newAssistantMsgId, role: 'assistant', content: query, logs: [], metrics: null, charts: {}, loading: true }
     ]);
     setInputValue('');
     setStage('chat');
     setCurrentAgent('初始化...');
   };
-  // --- 通用柱状图组件（防御性增强） ---
+  // =====================================================
+  //  通用柱状图组件 — 升级版：显示具体数值
+  // =====================================================
   const MiniBarChart = ({
     data,
     keys,
-    colors
+    colors,
+    formatValue,  // 新增：数值格式化函数
+    unit = ''     // 新增：单位
   }: {
     data: any[];
     keys: string[];
     colors: string[];
+    formatValue?: (v: number) => string;
+    unit?: string;
   }) => {
-    // 防御：确保 data 是非空数组
     if (!data || !Array.isArray(data) || data.length === 0) {
       return (
         <div className="h-40 flex items-center justify-center text-slate-300 text-xs">
@@ -138,29 +109,59 @@ export default function AuditApp() {
         </div>
       );
     }
-    const maxVal = Math.max(
-      ...data.map(d => Math.abs(d[keys[0]]) || 1)
-    );
+    const maxVal = Math.max(...data.map(d => Math.abs(d[keys[0]]) || 1));
+    const defaultFormat = (v: number) => v >= 1000 ? `${(v / 10000).toFixed(1)}万` : v.toFixed(1);
     return (
-      <div className="w-full h-40 flex items-end justify-around border-b border-slate-100 pb-2">
-        {data.map((d, i) => (
-          <div key={i} className="flex flex-col items-center flex-1 group">
-            <div className="flex items-end gap-1 h-32 relative">
-              {keys.map((key, ki) => (
-                <div
-                  key={ki}
-                  style={{
-                    height: `${Math.min((Math.abs(d[key]) / maxVal) * 100, 100)}%`
-                  }}
-                  className={`w-3 ${colors[ki]} rounded-t-sm transition-all group-hover:opacity-80`}
-                />
-              ))}
+      <div className="w-full">
+        {/* 柱状区域 */}
+        <div className="w-full h-40 flex items-end justify-around border-b border-slate-100 pb-2">
+          {data.map((d, i) => (
+            <div key={i} className="flex flex-col items-center flex-1 group">
+              {/* 数值标签（显示在柱子上方） */}
+              <div className="flex flex-col items-center gap-0.5 mb-1">
+                {keys.map((key, ki) => {
+                  const val = d[key];
+                  const formatted = formatValue ? formatValue(val) : defaultFormat(val);
+                  return (
+                    <div
+                      key={ki}
+                      className="text-[9px] font-black text-slate-600 leading-tight"
+                    >
+                      {formatted}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* 柱子 */}
+              <div className="flex items-end gap-1 h-32 relative">
+                {keys.map((key, ki) => (
+                  <div
+                    key={ki}
+                    style={{
+                      height: `${Math.min((Math.abs(d[key]) / maxVal) * 100, 100)}%`
+                    }}
+                    className={`w-4 ${colors[ki]} rounded-t-sm transition-all group-hover:opacity-80 relative`}
+                  >
+                    {/* 悬停提示（可选） */}
+                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-[8px] px-1 py-0.5 rounded whitespace-nowrap">
+                      {d[key]}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* 年份标签 */}
+              <span className="mt-2 text-[10px] font-bold text-slate-400">
+                {d.year}年
+              </span>
             </div>
-            <span className="mt-2 text-[10px] font-bold text-slate-400">
-              {d.year}
-            </span>
+          ))}
+        </div>
+        {/* 单位说明 */}
+        {unit && (
+          <div className="text-center text-[9px] text-slate-400 mt-1">
+            {unit}
           </div>
-        ))}
+        )}
       </div>
     );
   };
@@ -196,7 +197,6 @@ export default function AuditApp() {
             <div className="flex justify-between items-center mb-8">
               <button
                 onClick={() => {
-                  // 返回首页时关闭连接
                   if (sourceRef.current) {
                     sourceRef.current.close();
                     sourceRef.current = null;
@@ -221,9 +221,7 @@ export default function AuditApp() {
                   key={idx}
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div
-                    className={`p-6 rounded-2xl bg-white border border-slate-100 shadow-xl max-w-[95%] w-full`}
-                  >
+                  <div className={`p-6 rounded-2xl bg-white border border-slate-100 shadow-xl max-w-[95%] w-full`}>
                     {msg.role === 'assistant' && msg.metrics ? (
                       <div>
                         {/* 1. 核心头部：评分 + 营收 */}
@@ -279,27 +277,37 @@ export default function AuditApp() {
                           ))}
                         </div>
                         <div className="p-4 bg-white rounded-xl border border-slate-100">
+                          {/* 盈利分析：营收+净利润，单位亿 */}
                           {activeTab === 'profit' && (
                             <MiniBarChart
                               data={msg.charts?.profit_chart || []}
                               keys={['revenue', 'profit']}
                               colors={['bg-violet-500', 'bg-teal-400']}
+                              formatValue={(v) => `${(v / 1).toFixed(0)}亿`}
+                              unit="单位：亿元"
                             />
                           )}
+                          {/* 资产结构：总资产+总负债，单位亿 */}
                           {activeTab === 'asset' && (
                             <MiniBarChart
                               data={msg.charts?.asset_chart || []}
                               keys={['assets', 'debt']}
                               colors={['bg-blue-500', 'bg-orange-400']}
+                              formatValue={(v) => `${(v / 1).toFixed(0)}亿`}
+                              unit="单位：亿元"
                             />
                           )}
+                          {/* 现金流：经营性现金流净额，单位亿 */}
                           {activeTab === 'cash' && (
                             <MiniBarChart
                               data={msg.charts?.cash_chart || []}
                               keys={['cash_flow']}
                               colors={['bg-emerald-500']}
+                              formatValue={(v) => `${(v / 1).toFixed(0)}亿`}
+                              unit="单位：亿元"
                             />
                           )}
+                          {/* 图例 */}
                           <div className="mt-4 flex gap-4 justify-center">
                             {activeTab === 'profit' && (
                               <>
@@ -307,7 +315,7 @@ export default function AuditApp() {
                                   <div className="w-2 h-2 bg-violet-500 rounded-full" /> 营收
                                 </div>
                                 <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                  <div className="w-2 h-2 bg-teal-400 rounded-full" /> 利润
+                                  <div className="w-2 h-2 bg-teal-400 rounded-full" /> 净利润
                                 </div>
                               </>
                             )}
