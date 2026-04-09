@@ -1,27 +1,43 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Activity, ArrowLeft, User, Bot, TrendingUp, ShieldCheck, BarChart3, PieChart, Wallet } from 'lucide-react';
+import { Search, Activity, ArrowLeft, TrendingUp, ShieldCheck, BarChart3, PieChart, Wallet } from 'lucide-react';
+
+// --- 模拟顶部行情数据 ---
+const TICKER_DATA = [
+  { name: '创业板指', val: '2,456.78', change: '-0.45%', up: false },
+  { name: '标普500', val: '4,789.32', change: '+0.67%', up: true },
+  { name: '纳斯达克', val: '15,234.56', change: '+1.12%', up: true },
+  { name: '道琼斯', val: '38,567.23', change: '+0.34%', up: true },
+  { name: '上证指数', val: '3,245.67', change: '+1.24%', up: true },
+  { name: '恒生指数', val: '16,723.12', change: '-0.12%', up: false },
+];
+
 export default function AuditApp() {
   const [stage, setStage] = useState<'home' | 'chat'>('home');
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'profit' | 'asset' | 'cash'>('profit');
   const [currentAgent, setCurrentAgent] = useState<string>('初始化...');
+  
   const currentQueryRef = useRef<string>('');
   const sourceRef = useRef<EventSource | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 自动滚动 [cite: 6]
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // SSE 核心逻辑 [cite: 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
   useEffect(() => {
     if (stage !== 'chat' || !currentQueryRef.current) return;
     const query = currentQueryRef.current;
     const url = `https://my-audit-system-production.up.railway.app/api/v1/audit?company_name=${encodeURIComponent(query)}`;
-    if (sourceRef.current) {
-      sourceRef.current.close();
-    }
+    
+    if (sourceRef.current) sourceRef.current.close();
     const source = new EventSource(url);
     sourceRef.current = source;
+
     source.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -48,165 +64,157 @@ export default function AuditApp() {
             return prev;
           });
         }
-      } catch (e) {
-        console.error('SSE 解析失败', e);
-      }
+      } catch (e) { console.error('SSE 解析失败', e); }
     };
-    source.addEventListener('complete', () => {
-      source.close();
-      sourceRef.current = null;
-    });
-    source.onerror = () => {
-      source.close();
-      sourceRef.current = null;
-    };
-    return () => {
-      if (sourceRef.current) {
-        sourceRef.current.close();
-        sourceRef.current = null;
-      }
-    };
+
+    source.addEventListener('complete', () => { source.close(); sourceRef.current = null; });
+    source.onerror = () => { source.close(); sourceRef.current = null; };
+
+    return () => { if (sourceRef.current) { sourceRef.current.close(); sourceRef.current = null; } };
   }, [stage]);
+
   const handleSend = (text?: string) => {
     const query = text || inputValue;
     if (!query.trim()) return;
-    if (sourceRef.current) {
-      sourceRef.current.close();
-      sourceRef.current = null;
-    }
+    if (sourceRef.current) { sourceRef.current.close(); sourceRef.current = null; }
     currentQueryRef.current = query;
     const msgId = Date.now();
-    const newAssistantMsgId = msgId + 1;
     setMessages(prev => [
       ...prev,
       { id: msgId, role: 'user', content: query },
-      { id: newAssistantMsgId, role: 'assistant', content: query, logs: [], metrics: null, charts: {}, loading: true }
+      { id: msgId + 1, role: 'assistant', content: query, logs: [], metrics: null, charts: {}, loading: true }
     ]);
     setInputValue('');
     setStage('chat');
     setCurrentAgent('初始化...');
   };
-  // =====================================================
-  //  通用柱状图组件 — 升级版：显示具体数值
-  // =====================================================
-  const MiniBarChart = ({
-    data,
-    keys,
-    colors,
-    formatValue,  // 新增：数值格式化函数
-    unit = ''     // 新增：单位
-  }: {
-    data: any[];
-    keys: string[];
-    colors: string[];
-    formatValue?: (v: number) => string;
-    unit?: string;
-  }) => {
-    if (!data || !Array.isArray(data) || data.length === 0) {
-      return (
-        <div className="h-40 flex items-center justify-center text-slate-300 text-xs">
-          暂无数据
-        </div>
-      );
-    }
-    const maxVal = Math.max(...data.map(d => Math.abs(d[keys[0]]) || 1));
+
+  // --- 通用柱状图组件 [cite: 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35] ---
+  const MiniBarChart = ({ data, keys, colors, formatValue, unit = '' }: any) => {
+    if (!data || data.length === 0) return <div className="h-40 flex items-center justify-center text-slate-300 text-xs">暂无数据</div>;
+    const maxVal = Math.max(...data.map((d: any) => Math.abs(d[keys[0]]) || 1));
     const defaultFormat = (v: number) => v >= 1000 ? `${(v / 10000).toFixed(1)}万` : v.toFixed(1);
+
     return (
       <div className="w-full">
-        {/* 柱状区域 */}
         <div className="w-full h-40 flex items-end justify-around border-b border-slate-100 pb-2">
-          {data.map((d, i) => (
+          {data.map((d: any, i: number) => (
             <div key={i} className="flex flex-col items-center flex-1 group">
-              {/* 数值标签（显示在柱子上方） */}
               <div className="flex flex-col items-center gap-0.5 mb-1">
-                {keys.map((key, ki) => {
-                  const val = d[key];
-                  const formatted = formatValue ? formatValue(val) : defaultFormat(val);
-                  return (
-                    <div
-                      key={ki}
-                      className="text-[9px] font-black text-slate-600 leading-tight"
-                    >
-                      {formatted}
-                    </div>
-                  );
-                })}
-              </div>
-              {/* 柱子 */}
-              <div className="flex items-end gap-1 h-32 relative">
-                {keys.map((key, ki) => (
-                  <div
-                    key={ki}
-                    style={{
-                      height: `${Math.min((Math.abs(d[key]) / maxVal) * 100, 100)}%`
-                    }}
-                    className={`w-4 ${colors[ki]} rounded-t-sm transition-all group-hover:opacity-80 relative`}
-                  >
-                    {/* 悬停提示（可选） */}
-                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-[8px] px-1 py-0.5 rounded whitespace-nowrap">
-                      {d[key]}
-                    </div>
+                {keys.map((key: string, ki: number) => (
+                  <div key={ki} className="text-[9px] font-black text-slate-600 leading-tight">
+                    {formatValue ? formatValue(d[key]) : defaultFormat(d[key])}
                   </div>
                 ))}
               </div>
-              {/* 年份标签 */}
-              <span className="mt-2 text-[10px] font-bold text-slate-400">
-                {d.year}年
-              </span>
+              <div className="flex items-end gap-1 h-32 relative">
+                {keys.map((key: string, ki: number) => (
+                  <div key={ki} style={{ height: `${Math.min((Math.abs(d[key]) / maxVal) * 100, 100)}%` }}
+                    className={`w-4 ${colors[ki]} rounded-t-sm transition-all group-hover:opacity-80 relative`}
+                  />
+                ))}
+              </div>
+              <span className="mt-2 text-[10px] font-bold text-slate-400">{d.year}年</span>
             </div>
           ))}
         </div>
-        {/* 单位说明 */}
-        {unit && (
-          <div className="text-center text-[9px] text-slate-400 mt-1">
-            {unit}
-          </div>
-        )}
+        {unit && <div className="text-center text-[9px] text-slate-400 mt-1">{unit}</div>}
       </div>
     );
   };
+
   return (
     <div className="min-h-screen bg-[#FDFDFF] flex flex-col font-sans">
-      <main className="flex-1 flex flex-col items-center relative overflow-hidden">
+      <main className="flex-1 flex flex-col relative overflow-hidden">
         {stage === 'home' ? (
-          <div className="w-full max-w-4xl pt-40 px-6 flex flex-col items-center">
-            <div className="w-16 h-16 bg-violet-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-violet-200">
-              <ShieldCheck className="text-white" size={32} />
+          <div className="w-full flex flex-col items-center">
+            {/* 1. 顶部实时行情条 */}
+            <div className="w-full bg-[#0F172A] text-white py-2.5 overflow-hidden border-b border-slate-800">
+              <div className="flex gap-10 whitespace-nowrap animate-pulse px-6">
+                {TICKER_DATA.concat(TICKER_DATA).map((item, i) => (
+                  <div key={i} className="flex gap-2 text-[12px] font-medium">
+                    <span className="opacity-50">{item.name}</span>
+                    <span className="font-bold">{item.val}</span>
+                    <span className={item.up ? 'text-emerald-400' : 'text-red-400'}>{item.change}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <h1 className="text-5xl font-black mb-4 tracking-tight text-slate-900 text-center">
-              AI 审计专家终端
-            </h1>
-            <div className="w-full relative max-w-2xl mt-10">
-              <input
-                className="w-full pl-6 pr-32 py-5 bg-white rounded-2xl border border-slate-100 shadow-2xl outline-none focus:ring-2 ring-violet-500"
-                placeholder="输入分析主体，例如：比亚迪..."
-                value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-              />
-              <button
-                onClick={() => handleSend()}
-                className="absolute right-3 top-3 bottom-3 px-6 bg-violet-600 text-white font-bold rounded-xl"
-              >
-                启动审计
-              </button>
+
+            <div className="w-full max-w-5xl pt-24 px-6 flex flex-col items-center">
+              {/* 2. 徽章 */}
+              <div className="mb-6 px-4 py-1.5 bg-violet-50 rounded-full border border-violet-100 flex items-center gap-2">
+                <Activity size={14} className="text-violet-500" />
+                <span className="text-[11px] font-bold text-violet-600 uppercase tracking-wider">
+                  Multi-Agent 驱动 · 数据 100% 真实 · 全球市场覆盖
+                </span>
+              </div>
+
+              {/* 3. 标题区 */}
+              <h1 className="text-6xl font-black mb-4 tracking-tight text-slate-900 text-center">
+                智能财务报表分析终端
+              </h1>
+              <p className="text-slate-400 font-medium mb-12 text-lg">
+                专业级财报深度解析 · 秒级生成研报级分析
+              </p>
+
+              {/* 4. 搜索框 */}
+              <div className="w-full relative max-w-3xl mb-20 group">
+                <div className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-violet-500 transition-colors">
+                  <Search size={22} />
+                </div>
+                <input
+                  className="w-full pl-16 pr-36 py-5.5 bg-white rounded-2xl border border-slate-100 shadow-[0_20px_50px_rgba(0,0,0,0.04)] outline-none focus:ring-2 ring-violet-500/20 focus:border-violet-200 text-lg transition-all"
+                  placeholder="输入公司名称/代码，或直接提问：对比比亚迪与特斯拉的盈利能力"
+                  value={inputValue}
+                  onChange={e => setInputValue(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSend()}
+                />
+                <button
+                  onClick={() => handleSend()}
+                  className="absolute right-2.5 top-2.5 bottom-2.5 px-8 bg-[#A594FD] hover:bg-violet-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-violet-200"
+                >
+                  分析
+                </button>
+              </div>
+
+              {/* 5. 功能卡片网格 */}
+              <div className="grid grid-cols-3 gap-8 w-full mb-16">
+                {[
+                  { icon: <Search className="text-blue-500" />, title: '智能数据检索', desc: '自动抓取最新官方财报数据，覆盖多维度财务指标' },
+                  { icon: <BarChart3 className="text-purple-500" />, title: '可视化图表', desc: '交互式图表展示财务趋势，直观呈现关键指标变化' },
+                  { icon: <Activity className="text-teal-500" />, title: '深度统计分析', desc: '基于统计模型生成专业研报，涵盖盈利、资产、现金流分析' },
+                ].map((feat, i) => (
+                  <div key={i} className="p-8 bg-white border border-slate-50 rounded-2xl shadow-sm hover:shadow-md transition-all">
+                    <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center mb-6">{feat.icon}</div>
+                    <h3 className="text-lg font-bold text-slate-800 mb-2">{feat.title}</h3>
+                    <p className="text-sm text-slate-500 leading-relaxed">{feat.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* 6. 快速入口 */}
+              <div className="flex flex-col items-center gap-4">
+                <span className="text-[11px] font-bold text-slate-300 uppercase tracking-[0.2em]">快速入口</span>
+                <div className="flex gap-3">
+                  {['2025 科技行业展望', '高 ROE 企业排名', '新能源汽车财务对比', '芯片行业盈利分析'].map(tag => (
+                    <button key={tag} onClick={() => handleSend(tag)} className="px-5 py-2.5 bg-white border border-slate-100 rounded-xl text-sm font-bold text-slate-500 hover:border-violet-200 hover:text-violet-600 transition-all shadow-sm">
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         ) : (
-          <div className="w-full max-w-5xl h-full flex flex-col pt-10 pb-20 px-6 overflow-y-auto">
+          /* 聊天界面逻辑 [cite: 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86] */
+          <div className="w-full max-w-5xl h-full flex flex-col pt-10 pb-20 px-6 overflow-y-auto mx-auto">
             <div className="flex justify-between items-center mb-8">
               <button
-                onClick={() => {
-                  if (sourceRef.current) {
-                    sourceRef.current.close();
-                    sourceRef.current = null;
-                  }
-                  setStage('home');
-                  currentQueryRef.current = '';
-                }}
-                className="flex items-center text-slate-400 font-bold hover:text-slate-600"
+                onClick={() => { if (sourceRef.current) sourceRef.current.close(); setStage('home'); }}
+                className="flex items-center text-slate-400 font-bold hover:text-slate-600 transition-colors"
               >
-                <ArrowLeft size={18} className="mr-2" /> 返回
+                <ArrowLeft size={18} className="mr-2" /> 返回首页
               </button>
               <div className="bg-violet-50 px-4 py-2 rounded-full border border-violet-100 flex items-center gap-2">
                 <Activity size={14} className="text-violet-500 animate-pulse" />
@@ -215,138 +223,83 @@ export default function AuditApp() {
                 </span>
               </div>
             </div>
+
             <div className="space-y-6">
               {messages.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div className={`p-6 rounded-2xl bg-white border border-slate-100 shadow-xl max-w-[95%] w-full`}>
+                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className="p-8 rounded-3xl bg-white border border-slate-100 shadow-2xl shadow-slate-200/50 max-w-[95%] w-full">
                     {msg.role === 'assistant' && msg.metrics ? (
                       <div>
-                        {/* 1. 核心头部：评分 + 营收 */}
                         <div className="grid grid-cols-3 gap-4 mb-6">
-                          <div className="bg-violet-600 p-4 rounded-xl text-white">
-                            <div className="text-[10px] font-bold opacity-70 uppercase mb-1">
-                              综合审计评分
-                            </div>
-                            <div className="text-3xl font-black">
-                              {msg.metrics.score ?? '—'}
-                            </div>
+                          <div className="bg-violet-600 p-5 rounded-2xl text-white shadow-lg shadow-violet-200">
+                            <div className="text-[10px] font-bold opacity-70 uppercase mb-1">综合审计评分</div>
+                            <div className="text-4xl font-black">{msg.metrics.score ?? '—'}</div>
                           </div>
-                          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                            <div className="text-[10px] font-black text-slate-400 uppercase mb-1">
-                              ROE
-                            </div>
-                            <div className="text-xl font-black text-slate-900">
-                              {msg.metrics.health?.roe ?? '—'}
-                            </div>
+                          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                            <div className="text-[10px] font-black text-slate-400 uppercase mb-1">ROE</div>
+                            <div className="text-xl font-black text-slate-900">{msg.metrics.health?.roe ?? '—'}</div>
                           </div>
-                          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                            <div className="text-[10px] font-black text-slate-400 uppercase mb-1">
-                              最新营收
-                            </div>
-                            <div className="text-xl font-black text-slate-900">
-                              {msg.metrics.health?.latest_revenue ?? '—'}
-                            </div>
+                          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                            <div className="text-[10px] font-black text-slate-400 uppercase mb-1">最新营收</div>
+                            <div className="text-xl font-black text-slate-900">{msg.metrics.health?.latest_revenue ?? '—'}</div>
                           </div>
                         </div>
-                        {/* 2. 结论分析 */}
-                        <div className="text-sm font-bold text-slate-700 bg-teal-50/50 p-4 rounded-xl border border-teal-100/50 mb-6">
-                          <TrendingUp size={16} className="inline mr-2 text-teal-500" />
+
+                        <div className="text-sm font-bold text-slate-700 bg-teal-50/50 p-5 rounded-2xl border border-teal-100/50 mb-6 leading-relaxed">
+                          <TrendingUp size={18} className="inline mr-2 text-teal-500" />
                           {msg.metrics.summary ?? '暂无分析结论'}
                         </div>
-                        {/* 3. 多维图表 Tabs */}
-                        <div className="bg-slate-50 p-2 rounded-lg flex gap-2 mb-4">
+
+                        <div className="bg-slate-50 p-2 rounded-xl flex gap-2 mb-4">
                           {[
                             { id: 'profit', label: '盈利分析', icon: <BarChart3 size={14} /> },
                             { id: 'asset', label: '资产结构', icon: <PieChart size={14} /> },
                             { id: 'cash', label: '现金流', icon: <Wallet size={14} /> }
                           ].map(tab => (
-                            <button
-                              key={tab.id}
-                              onClick={() => setActiveTab(tab.id as any)}
-                              className={`flex-1 flex items-center justify-center gap-2 py-2 text-[11px] font-bold rounded-md transition-all ${
-                                activeTab === tab.id
-                                  ? 'bg-white shadow-sm text-violet-600'
-                                  : 'text-slate-400 hover:bg-slate-100'
+                            <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
+                              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[11px] font-bold rounded-lg transition-all ${
+                                activeTab === tab.id ? 'bg-white shadow-sm text-violet-600' : 'text-slate-400 hover:bg-slate-100'
                               }`}
                             >
                               {tab.icon} {tab.label}
                             </button>
                           ))}
                         </div>
-                        <div className="p-4 bg-white rounded-xl border border-slate-100">
-                          {/* 盈利分析：营收+净利润，单位亿 */}
-                          {activeTab === 'profit' && (
-                            <MiniBarChart
-                              data={msg.charts?.profit_chart || []}
-                              keys={['revenue', 'profit']}
-                              colors={['bg-violet-500', 'bg-teal-400']}
-                              formatValue={(v) => `${(v / 1).toFixed(0)}亿`}
-                              unit="单位：亿元"
-                            />
-                          )}
-                          {/* 资产结构：总资产+总负债，单位亿 */}
-                          {activeTab === 'asset' && (
-                            <MiniBarChart
-                              data={msg.charts?.asset_chart || []}
-                              keys={['assets', 'debt']}
-                              colors={['bg-blue-500', 'bg-orange-400']}
-                              formatValue={(v) => `${(v / 1).toFixed(0)}亿`}
-                              unit="单位：亿元"
-                            />
-                          )}
-                          {/* 现金流：经营性现金流净额，单位亿 */}
-                          {activeTab === 'cash' && (
-                            <MiniBarChart
-                              data={msg.charts?.cash_chart || []}
-                              keys={['cash_flow']}
-                              colors={['bg-emerald-500']}
-                              formatValue={(v) => `${(v / 1).toFixed(0)}亿`}
-                              unit="单位：亿元"
-                            />
-                          )}
-                          {/* 图例 */}
-                          <div className="mt-4 flex gap-4 justify-center">
+
+                        <div className="p-6 bg-white rounded-2xl border border-slate-100">
+                          {activeTab === 'profit' && <MiniBarChart data={msg.charts?.profit_chart || []} keys={['revenue', 'profit']} colors={['bg-violet-500', 'bg-teal-400']} formatValue={(v: any) => `${v}亿`} unit="单位：亿元" />}
+                          {activeTab === 'asset' && <MiniBarChart data={msg.charts?.asset_chart || []} keys={['assets', 'debt']} colors={['bg-blue-500', 'bg-orange-400']} formatValue={(v: any) => `${v}亿`} unit="单位：亿元" />}
+                          {activeTab === 'cash' && <MiniBarChart data={msg.charts?.cash_chart || []} keys={['cash_flow']} colors={['bg-emerald-500']} formatValue={(v: any) => `${v}亿`} unit="单位：亿元" />}
+                          
+                          <div className="mt-6 flex gap-6 justify-center border-t border-slate-50 pt-4">
                             {activeTab === 'profit' && (
                               <>
-                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                  <div className="w-2 h-2 bg-violet-500 rounded-full" /> 营收
-                                </div>
-                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                  <div className="w-2 h-2 bg-teal-400 rounded-full" /> 净利润
-                                </div>
+                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400"><div className="w-2.5 h-2.5 bg-violet-500 rounded-full" /> 营业收入</div>
+                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400"><div className="w-2.5 h-2.5 bg-teal-400 rounded-full" /> 净利润</div>
                               </>
                             )}
                             {activeTab === 'asset' && (
                               <>
-                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                  <div className="w-2 h-2 bg-blue-500 rounded-full" /> 总资产
-                                </div>
-                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                  <div className="w-2 h-2 bg-orange-400 rounded-full" /> 总负债
-                                </div>
+                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400"><div className="w-2.5 h-2.5 bg-blue-500 rounded-full" /> 总资产</div>
+                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400"><div className="w-2.5 h-2.5 bg-orange-400 rounded-full" /> 总负债</div>
                               </>
                             )}
                             {activeTab === 'cash' && (
-                              <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                                <div className="w-2 h-2 bg-emerald-500 rounded-full" /> 经营现金流
-                              </div>
+                              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400"><div className="w-2.5 h-2.5 bg-emerald-500 rounded-full" /> 经营现金流</div>
                             )}
                           </div>
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         {msg.logs?.map((log: string, i: number) => (
-                          <div key={i} className="text-[11px] text-slate-400 flex items-center">
-                            <span className="w-1 h-1 bg-violet-300 rounded-full mr-2" /> {log}
+                          <div key={i} className="text-[12px] text-slate-400 flex items-center font-medium">
+                            <span className="w-1.5 h-1.5 bg-violet-300 rounded-full mr-3" /> {log}
                           </div>
                         ))}
                         {msg.loading && (
-                          <div className="text-xs text-violet-500 font-bold animate-pulse mt-4">
-                            正在穿透底层账目...
+                          <div className="text-sm text-violet-500 font-black animate-pulse mt-6 flex items-center gap-2">
+                            <Activity size={16} /> 正在穿透底层账目，调取实时数据...
                           </div>
                         )}
                       </div>
