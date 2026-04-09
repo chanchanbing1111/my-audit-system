@@ -1,5 +1,5 @@
 """
-Sentient Audit System - SSE 流式接口
+Sentient Audit System - SSE 流式接口 (增强版)
 """
 import json
 import asyncio
@@ -9,13 +9,13 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
+# 假设你的工程结构中包含此路径
 from src.audit_engine import AuditEngine
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _engine = None
-
 
 def get_engine():
     global _engine
@@ -36,19 +36,19 @@ async def stream_audit(request: Request, company_name: str):
     async def event_generator():
         engine = get_engine()
 
-        # Step 1: 预热日志（防止连接断开）
+        # Step 1: 预热日志
         warmup_logs = [
             f"📡 正在建立 2026 安全审计加密隧道...",
-            f"🔎 正在向数据中心申请 {company_name} 2023-2025 财报访问权限...",
+            f"🔎 正在向数据中心申请 {company_name} 2023-2025 深度财报访问权限...",
             f"🧠 正在调度分布式审计智能体节点 (Node: {str(uuid.uuid4())[:8]})...",
-            f"📊 正在初始化多年度勾稽关系算法，准备深度侦测..."
+            f"📊 正在初始化多年度勾稽关系算法，准备进行三表联动侦测..."
         ]
 
         for log in warmup_logs:
             yield {"event": "message", "data": json.dumps({"type": "log", "content": log})}
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
 
-        # Step 2: 运行 LangGraph 工作流（同步调用 + 实时推送中间结果）
+        # Step 2: 运行 LangGraph 工作流
         thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
         initial_input = {
@@ -59,75 +59,70 @@ async def stream_audit(request: Request, company_name: str):
         }
 
         try:
-            # 使用 ainvoke（一次性获取完整结果），同时开启后台日志推送
+            result_queue = asyncio.Queue()
+
             async def run_workflow():
-                """后台运行工作流，把每步结果通过队列传回来"""
+                """后台运行工作流，捕获每个节点的更新"""
                 try:
+                    # 使用 astream 监听每个节点的更新
                     async for event in engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
                         for node_name, node_data in event.items():
                             await result_queue.put((node_name, node_data))
                     await result_queue.put(("__done__", None))
                 except Exception as e:
-                    import traceback
-                    logger.error(traceback.format_exc())
+                    logger.error(f"Workflow Error: {str(e)}")
                     await result_queue.put(("__error__", str(e)))
 
-            result_queue = asyncio.Queue()
-
-            # 启动后台工作流
+            # 启动后台任务
             workflow_task = asyncio.create_task(run_workflow())
 
-            # 同时监听队列，实时推送结果给前端
             while True:
                 try:
-                    node_name, node_data = await asyncio.wait_for(result_queue.get(), timeout=60)
+                    node_name, node_data = await asyncio.wait_for(result_queue.get(), timeout=90)
                 except asyncio.TimeoutError:
-                    # 工作流超过60秒无输出，强制结束
                     workflow_task.cancel()
-                    yield {"event": "message", "data": json.dumps({
-                        "type": "log", "content": "⚠️ 审计超时，请检查 EXA API 或网络连接"
-                    })}
+                    yield {"event": "message", "data": json.dumps({"type": "log", "content": "⚠️ 审计节点响应超时"})}
                     break
 
-                if node_name == "__done__":
-                    break
+                if node_name == "__done__": break
                 if node_name == "__error__":
-                    yield {"event": "message", "data": json.dumps({
-                        "type": "log", "content": f"❌ 工作流异常: {node_data}"
-                    })}
+                    yield {"event": "message", "data": json.dumps({"type": "log", "content": f"❌ 审计系统异常: {node_data}"})}
                     break
 
-                # 推送 logs
+                # --- 核心修改点：多维度数据透传 ---
+                
+                # 1. 日志推送：提取当前节点的最新一条日志
                 if "logs" in node_data and node_data["logs"]:
-                    msg = str(node_data["logs"][-1]).replace("\n", " ").replace("\r", "")
+                    last_log = node_data["logs"][-1]
                     yield {
                         "event": "message",
-                        "data": json.dumps({"type": "log", "content": f"[{node_name}] {msg}"})
+                        "data": json.dumps({"type": "log", "content": f"[{node_name}] {last_log}"})
                     }
 
-                # 推送 metrics
-                if "metrics" in node_data and node_data.get("metrics"):
+                # 2. 指标与评分推送：当 auditor_agent 完成核定时推送
+                # 注意：这里需要兼容你新定义的 financial_data 或 metrics 结构
+                if node_name == "auditor_agent" or "metrics" in node_data:
+                    # 优先获取封装好的财务指标和评分
+                    payload = {
+                        "type": "metrics",
+                        "metrics": {
+                            "health": node_data.get("metrics", {}).get("health"),
+                            "score": node_data.get("metrics", {}).get("score") or node_data.get("financial_data", {}).get("audit_score"),
+                            "summary": node_data.get("metrics", {}).get("summary") or node_data.get("financial_data", {}).get("insights", {}).get("summary")
+                        },
+                        "charts": node_data.get("charts", {}), # 包含 profit_chart, asset_chart, cash_chart
+                        "node": node_name
+                    }
                     yield {
                         "event": "message",
-                        "data": json.dumps({
-                            "type": "metrics",
-                            "metrics": node_data["metrics"],
-                            "charts": node_data.get("charts", {}),
-                            "details": f"核定节点: {node_name}"
-                        })
+                        "data": json.dumps(payload)
                     }
 
-            # 等待后台任务结束
             workflow_task.cancel()
 
         except Exception as e:
-            import traceback
-            logger.error(traceback.format_exc())
-            yield {"event": "message", "data": json.dumps({
-                "type": "log", "content": f"❌ 审计中断: {str(e)}"
-            })}
+            yield {"event": "message", "data": json.dumps({"type": "log", "content": f"❌ 连接中断: {str(e)}"})}
 
-        # 最后发送 complete
         yield {"event": "complete", "data": json.dumps({"success": True})}
 
     return EventSourceResponse(
@@ -136,5 +131,6 @@ async def stream_audit(request: Request, company_name: str):
         headers={
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*", # 解决跨域
         }
     )
