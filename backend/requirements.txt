@@ -1,12 +1,23 @@
+# Web 框架与服务器
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
-pydantic>=2.5.0
-httpx>=0.25.2
-exa-py>=1.0.0
-openai>=1.3.0
-python-dotenv>=1.0.0
 sse-starlette>=1.8.2
-plotly>=5.17.0
-# 核心修复点：必须使用 0.2.x 以上版本
+
+# 基础库
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+httpx>=0.25.2
+
+# 核心数据抓取（新增加）
+yfinance>=0.2.38
+exa-py>=1.0.0
+
+# AI 与多智能体
+openai>=1.3.0
 langgraph>=0.2.0
 langgraph-checkpoint>=1.0.0
+
+# 数据处理与图表
+plotly>=5.17.0
+pandas>=2.1.0
