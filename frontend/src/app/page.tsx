@@ -9,7 +9,7 @@ export default function AuditApp() {
   const [activeTab, setActiveTab] = useState<'profit' | 'asset' | 'cash'>('profit');
   const [currentAgent, setCurrentAgent] = useState<string>('初始化...');
   
-  // 实时行情状态：初始为空，通过 API 加载真实数据
+  // 实时行情状态
   const [tickerData, setTickerData] = useState<any[]>([]);
   
   const currentQueryRef = useRef<string>('');
@@ -19,7 +19,7 @@ export default function AuditApp() {
   // 1. 同步真实行情逻辑
   const fetchMarketData = async () => {
     try {
-      // ⚠️ 请确保此地址与你 Railway 部署的后端地址一致
+      // 请确保此地址为您 Railway 部署后的后端地址
       const response = await fetch('https://my-audit-system-production.up.railway.app/api/v1/market_tickers');
       const data = await response.json();
       if (Array.isArray(data) && data.length > 0) {
@@ -32,16 +32,16 @@ export default function AuditApp() {
 
   useEffect(() => {
     fetchMarketData(); 
-    const timer = setInterval(fetchMarketData, 60000); // 每 60 秒同步一次真实行情
+    const timer = setInterval(fetchMarketData, 60000); 
     return () => clearInterval(timer);
   }, []);
 
-  // 2. 自动滚动聊天记录 [cite: 203]
+  // 2. 自动滚动聊天记录
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 3. SSE 流式传输逻辑 [cite: 204, 212]
+  // 3. SSE 流式传输逻辑
   useEffect(() => {
     if (stage !== 'chat' || !currentQueryRef.current) return;
     const query = currentQueryRef.current;
@@ -102,7 +102,6 @@ export default function AuditApp() {
     setCurrentAgent('初始化...');
   };
 
-  // --- 柱状图组件 ---
   const MiniBarChart = ({ data, keys, colors, formatValue, unit = '' }: any) => {
     if (!data || data.length === 0) return <div className="h-40 flex items-center justify-center text-slate-300 text-xs">暂无数据</div>;
     const maxVal = Math.max(...data.map((d: any) => Math.abs(d[keys[0]]) || 1));
@@ -138,7 +137,7 @@ export default function AuditApp() {
 
   return (
     <div className="min-h-screen bg-[#FDFDFF] flex flex-col font-sans overflow-x-hidden">
-      {/* 顶部实时行情条 */}
+      {/* 顶部实时流动行情条 */}
       <div className="w-full bg-[#0F172A] text-white py-3 border-b border-slate-800 z-50">
         <div className="flex whitespace-nowrap overflow-hidden">
           <div className="flex animate-marquee hover:[animation-play-state:paused] gap-12 px-6">
@@ -173,20 +172,23 @@ export default function AuditApp() {
 
         {stage === 'home' ? (
           <div className="w-full flex flex-col items-center pt-24 pb-20">
+            {/* 核心徽章 */}
             <div className="mb-8 px-5 py-2 bg-violet-50 rounded-full border border-violet-100 flex items-center gap-2 shadow-sm shadow-violet-100/50">
               <Activity size={14} className="text-violet-500" />
               <span className="text-[12px] font-bold text-violet-600 uppercase tracking-[0.15em]">
-                Multi-Agent 驱动 · 数据 100% 真实 · 全球市场覆盖 [cite: 230]
+                Multi-Agent 驱动 · 数据 100% 真实 · 全球市场覆盖
               </span>
             </div>
 
+            {/* 标题区 */}
             <h1 className="text-7xl font-black mb-6 tracking-tight text-slate-900 text-center">
-              智能财务报表分析终端 [cite: 231]
+              智能财务报表分析终端
             </h1>
             <p className="text-slate-400 font-semibold mb-16 text-xl tracking-wide">
               专业级财报深度解析 · 秒级生成研报级分析
             </p>
 
+            {/* 增强型搜索框 */}
             <div className="w-full relative max-w-4xl mb-24 group px-6">
               <div className="absolute left-10 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-violet-500 transition-colors z-10">
                 <Search size={26} />
@@ -202,10 +204,11 @@ export default function AuditApp() {
                 onClick={() => handleSend()}
                 className="absolute right-10 top-3.5 bottom-3.5 px-14 bg-[#A594FD] hover:bg-violet-500 text-white font-black rounded-3xl transition-all shadow-xl shadow-violet-200 flex items-center justify-center text-xl tracking-widest"
               >
-                分析 [cite: 234]
+                分析
               </button>
             </div>
 
+            {/* 功能矩阵卡片 */}
             <div className="grid grid-cols-3 gap-8 w-full max-w-6xl mb-20 px-6">
               {[
                 { icon: <Search className="text-blue-500" />, title: '智能数据检索', desc: '自动抓取最新官方财报数据，覆盖多维度财务指标' },
@@ -214,21 +217,32 @@ export default function AuditApp() {
               ].map((feat, i) => (
                 <div key={i} className="p-10 bg-white border border-slate-50 rounded-[2.5rem] shadow-[0_10px_30px_rgba(0,0,0,0.02)] hover:shadow-xl hover:-translate-y-1 transition-all">
                   <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center mb-8">{feat.icon}</div>
-                  <h3 className="text-xl font-black text-slate-800 mb-3">{feat.title} [cite: 237]</h3>
+                  <h3 className="text-xl font-black text-slate-800 mb-3">{feat.title}</h3>
                   <p className="text-slate-500 leading-relaxed font-medium">{feat.desc}</p>
                 </div>
               ))}
+            </div>
+
+            <div className="flex flex-col items-center gap-6">
+              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-[0.3em]">快速入口</span>
+              <div className="flex gap-4">
+                {['2025 科技行业展望', '高 ROE 企业排名', '新能源汽车财务对比', '芯片行业盈利分析'].map(tag => (
+                  <button key={tag} onClick={() => handleSend(tag)} className="px-7 py-3 bg-white border border-slate-100 rounded-2xl text-[13px] font-bold text-slate-500 hover:border-violet-200 hover:text-violet-600 transition-all shadow-sm">
+                    {tag}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
           <div className="w-full max-w-5xl h-full flex flex-col pt-10 pb-20 px-6 overflow-y-auto mx-auto">
             <div className="flex justify-between items-center mb-10">
               <button onClick={() => { if (sourceRef.current) sourceRef.current.close(); setStage('home'); }} className="flex items-center text-slate-400 font-bold hover:text-slate-600">
-                <ArrowLeft size={20} className="mr-3" /> 返回首页 [cite: 241]
+                <ArrowLeft size={20} className="mr-3" /> 返回首页
               </button>
               <div className="bg-violet-50 px-5 py-2.5 rounded-full border border-violet-100 flex items-center gap-3">
                 <Activity size={16} className="text-violet-500 animate-pulse" />
-                <span className="text-[12px] font-black text-violet-600 uppercase">当前节点: {currentAgent} [cite: 242]</span>
+                <span className="text-[12px] font-black text-violet-600 uppercase">当前节点: {currentAgent}</span>
               </div>
             </div>
 
@@ -241,28 +255,28 @@ export default function AuditApp() {
                         <div className="grid grid-cols-3 gap-6 mb-8">
                           <div className="bg-violet-600 p-6 rounded-3xl text-white shadow-xl shadow-violet-200">
                             <div className="text-[11px] font-bold opacity-70 uppercase mb-2">综合审计评分</div>
-                            <div className="text-5xl font-black">{msg.metrics.score ?? '—'} [cite: 245]</div>
+                            <div className="text-5xl font-black">{msg.metrics.score ?? '—'}</div>
                           </div>
                           <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
                             <div className="text-[11px] font-black text-slate-400 uppercase mb-2">ROE</div>
-                            <div className="text-2xl font-black text-slate-900">{msg.metrics.health?.roe ?? '—'} [cite: 247]</div>
+                            <div className="text-2xl font-black text-slate-900">{msg.metrics.health?.roe ?? '—'}</div>
                           </div>
                           <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
                             <div className="text-[11px] font-black text-slate-400 uppercase mb-2">最新营收</div>
-                            <div className="text-2xl font-black text-slate-900">{msg.metrics.health?.latest_revenue ?? '—'} [cite: 249]</div>
+                            <div className="text-2xl font-black text-slate-900">{msg.metrics.health?.latest_revenue ?? '—'}</div>
                           </div>
                         </div>
 
                         <div className="text-[15px] font-bold text-slate-700 bg-teal-50/50 p-7 rounded-3xl border border-teal-100/50 mb-8 leading-relaxed">
                           <TrendingUp size={20} className="inline mr-3 text-teal-500" />
-                          {msg.metrics.summary ?? '暂无分析结论'} [cite: 251]
+                          {msg.metrics.summary ?? '暂无分析结论'}
                         </div>
 
                         <div className="bg-slate-50 p-2.5 rounded-2xl flex gap-3 mb-6">
                           {['profit', 'asset', 'cash'].map(id => (
                             <button key={id} onClick={() => setActiveTab(id as any)}
-                              className={`flex-1 py-3.5 text-[12px] font-bold rounded-xl transition-all ${
-                                activeTab === id ? 'bg-white shadow-sm text-violet-600' : 'text-slate-400'
+                              className={`flex-1 flex items-center justify-center py-3.5 text-[12px] font-bold rounded-xl transition-all ${
+                                activeTab === id ? 'bg-white shadow-sm text-violet-600' : 'text-slate-400 hover:bg-slate-100'
                               }`}
                             >
                               {id === 'profit' ? '盈利分析' : id === 'asset' ? '资产结构' : '现金流'}
@@ -284,7 +298,9 @@ export default function AuditApp() {
                           </div>
                         ))}
                         {msg.loading && (
-                          <div className="text-base text-violet-500 font-black animate-pulse mt-8">正在进行穿透式审计侦测...</div>
+                          <div className="text-base text-violet-500 font-black animate-pulse mt-8 flex items-center gap-3">
+                            <Activity size={20} /> 正在穿透底层账目，进行多维勾联侦测...
+                          </div>
                         )}
                       </div>
                     )}
