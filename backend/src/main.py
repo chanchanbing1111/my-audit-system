@@ -1,5 +1,5 @@
 """
-Sentient Audit System - FastAPI 主入口 (集成真实行情接口)
+Sentient Audit System - FastAPI 主入口
 """
 import os
 import logging
@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 屏蔽可能导致输出污染的 SDK 日志
+# 屏蔽底层 SDK 日志
 logging.getLogger("openai").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 
