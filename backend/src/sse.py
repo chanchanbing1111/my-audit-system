@@ -1,5 +1,5 @@
 """
-Sentient Audit System - SSE 流式接口 (增强版)
+Sentient Audit System - SSE 流式接口
 """
 import json
 import asyncio
@@ -15,6 +15,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _engine = None
+
 
 def get_engine():
     global _engine
@@ -35,19 +36,19 @@ async def stream_audit(request: Request, company_name: str):
     async def event_generator():
         engine = get_engine()
 
-        # Step 1: 预热日志
+        # Step 1: 预热日志（防止连接断开）
         warmup_logs = [
             f"📡 正在建立 2026 安全审计加密隧道...",
-            f"🔎 正在向数据中心申请 {company_name} 2023-2025 深度财报访问权限...",
+            f"🔎 正在向数据中心申请 {company_name} 2023-2025 财报访问权限...",
             f"🧠 正在调度分布式审计智能体节点 (Node: {str(uuid.uuid4())[:8]})...",
-            f"📊 正在初始化多年度勾稽关系算法，准备进行三表联动侦测..."
+            f"📊 正在初始化多年度勾稽关系算法，准备深度侦测..."
         ]
 
         for log in warmup_logs:
             yield {"event": "message", "data": json.dumps({"type": "log", "content": log})}
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
 
-        # Step 2: 运行 LangGraph 工作流
+        # Step 2: 运行 LangGraph 工作流（同步调用 + 实时推送中间结果）
         thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
         initial_input = {
@@ -58,100 +59,75 @@ async def stream_audit(request: Request, company_name: str):
         }
 
         try:
+            # 使用 ainvoke（一次性获取完整结果），同时开启后台日志推送
+            async def run_workflow():
+                """后台运行工作流，把每步结果通过队列传回来"""
+                try:
+                    async for event in engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
+                        for node_name, node_data in event.items():
+                            await result_queue.put((node_name, node_data))
+                    await result_queue.put(("__done__", None))
+                except Exception as e:
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    await result_queue.put(("__error__", str(e)))
+
             result_queue = asyncio.Queue()
 
-            async def run_workflow():
-                """后台运行工作流，捕获每个节点的更新"""
-                try:
-                    # =====================================================
-                    #  改用 .astream() + stream_mode="updates"
-                    #  每返回一个 dict: { node_name: node_output_dict }
-                    # =====================================================
-                    async for event in engine.workflow.astream(
-                        initial_input,
-                        config=config,
-                        stream_mode="updates"
-                    ):
-                        logger.info(f"[Workflow] Raw event: {type(event)}, value: {event}")
-                        # event 格式: { "search_agent": {...}, "auditor_agent": {...}, ... }
-                        if isinstance(event, dict):
-                            for node_name, node_data in event.items():
-                                logger.info(f"[Workflow] Node={node_name}, data_keys={list(node_data.keys()) if isinstance(node_data, dict) else 'not_dict'}")
-                                await result_queue.put((node_name, node_data))
-                        await asyncio.sleep(0)
-                    await result_queue.put(("__done__", None))
-
-                except Exception as e:
-                    logger.error(f"[Workflow] Exception: {type(e).__name__}: {str(e)}", exc_info=True)
-                    await result_queue.put(("__error__", f"{type(e).__name__}: {str(e)}"))
-
+            # 启动后台工作流
             workflow_task = asyncio.create_task(run_workflow())
 
+            # 同时监听队列，实时推送结果给前端
             while True:
                 try:
-                    node_name, node_data = await asyncio.wait_for(
-                        result_queue.get(),
-                        timeout=120
-                    )
+                    node_name, node_data = await asyncio.wait_for(result_queue.get(), timeout=60)
                 except asyncio.TimeoutError:
-                    yield {"event": "message", "data": json.dumps({"type": "log", "content": "⚠️ 审计节点响应超时（120秒）"})}
+                    # 工作流超过60秒无输出，强制结束
                     workflow_task.cancel()
-                    try:
-                        await workflow_task
-                    except asyncio.CancelledError:
-                        pass
+                    yield {"event": "message", "data": json.dumps({
+                        "type": "log", "content": "⚠️ 审计超时，请检查 EXA API 或网络连接"
+                    })}
                     break
 
                 if node_name == "__done__":
                     break
                 if node_name == "__error__":
-                    yield {"event": "message", "data": json.dumps({"type": "log", "content": f"❌ 审计系统异常: {node_data}"})}
+                    yield {"event": "message", "data": json.dumps({
+                        "type": "log", "content": f"❌ 工作流异常: {node_data}"
+                    })}
                     break
 
-                # =====================================================
-                #  日志推送
-                # =====================================================
-                if node_data and isinstance(node_data, dict):
-                    if "logs" in node_data and node_data["logs"]:
-                        last_log = node_data["logs"][-1]
-                        yield {
-                            "event": "message",
-                            "data": json.dumps({"type": "log", "content": f"[{node_name}] {last_log}"})
-                        }
+                # 推送 logs
+                if "logs" in node_data and node_data["logs"]:
+                    msg = str(node_data["logs"][-1]).replace("\n", " ").replace("\r", "")
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({"type": "log", "content": f"[{node_name}] {msg}"})
+                    }
 
-                    # =====================================================
-                    #  metrics + charts 推送（只在 auditor_agent 节点出现）
-                    # =====================================================
-                    if node_name == "auditor_agent":
-                        metrics = node_data.get("metrics", {})
-                        financial_data = node_data.get("financial_data", {})
-
-                        payload = {
+                # 推送 metrics
+                if "metrics" in node_data and node_data.get("metrics"):
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({
                             "type": "metrics",
-                            "metrics": {
-                                "health": metrics.get("health") or financial_data.get("core_metrics", {}),
-                                "score": metrics.get("score") or financial_data.get("audit_score"),
-                                "summary": metrics.get("summary") or financial_data.get("insights", {}).get("summary", "")
-                            },
+                            "metrics": node_data["metrics"],
                             "charts": node_data.get("charts", {}),
-                            "node": node_name
-                        }
-                        yield {"event": "message", "data": json.dumps(payload)}
+                            "details": f"核定节点: {node_name}"
+                        })
+                    }
 
-                await asyncio.sleep(0)
-
+            # 等待后台任务结束
             workflow_task.cancel()
-            try:
-                await workflow_task
-            except asyncio.CancelledError:
-                pass
 
-        except asyncio.CancelledError:
-            pass
         except Exception as e:
-            logger.error(f"[SSE] Generator error: {type(e).__name__}: {str(e)}", exc_info=True)
-            yield {"event": "message", "data": json.dumps({"type": "log", "content": f"❌ 连接中断: {str(e)}"})}
+            import traceback
+            logger.error(traceback.format_exc())
+            yield {"event": "message", "data": json.dumps({
+                "type": "log", "content": f"❌ 审计中断: {str(e)}"
+            })}
 
+        # 最后发送 complete
         yield {"event": "complete", "data": json.dumps({"success": True})}
 
     return EventSourceResponse(
@@ -160,6 +136,5 @@ async def stream_audit(request: Request, company_name: str):
         headers={
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
-            "Access-Control-Allow-Origin": "*",
         }
     )
