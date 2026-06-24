@@ -1,24 +1,25 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Activity, ArrowLeft, User, Bot, TrendingUp, ShieldCheck } from 'lucide-react';
+import { Search, BarChart3, Activity, ArrowLeft, CheckCircle2, Send, User, TrendingUp, AlertCircle, Bot } from 'lucide-react';
 
 export default function AuditApp() {
   const [stage, setStage] = useState<'home' | 'chat'>('home');
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [activeTabMap, setActiveTabMap] = useState<{ [key: string]: string }>({});
   const [error, setError] = useState<string | null>(null);
-  const [currentAgent, setCurrentAgent] = useState<string>("初始化...");
+  const [currentAgent, setCurrentAgent] = useState<string>("初始化..."); // 
   const scrollRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // 消息自动滚动
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages]);
+  const getWorkflowSteps = (name: string) => [
+    { label: `语义解析`, detail: `识别主体` },
+    { label: `数据穿透`, detail: `Agent 采集中` },
+    { label: `风险对账`, detail: `AI 勾稽中` },
+    { label: `质检完成`, detail: `多智能体终审` }
+  ];
 
   const handleSend = (text?: string) => {
     const query = text || inputValue;
@@ -28,28 +29,47 @@ export default function AuditApp() {
     const newAssistantMsgId = msgId + 1;
 
     setMessages(prev => [
-      ...prev,
+      ...prev, 
       { id: msgId, role: 'user', content: query },
-      { id: newAssistantMsgId, role: 'assistant', content: query, logs: [], step: 0, metrics: null, charts: null, loading: true }
+      { 
+        id: newAssistantMsgId, 
+        role: 'assistant', 
+        content: query, 
+        logs: [], 
+        step: 0, 
+        metrics: null, 
+        loading: true 
+      } 
     ]);
 
     setInputValue('');
     setStage('chat');
     setIsTyping(true);
-    setError(null);
 
-    // ✅ 直连 Railway 后端
-    const RAILWAY_BACKEND_URL = "https://my-audit-system-production.up.railway.app";
-    const url = `${RAILWAY_BACKEND_URL}/api/v1/audit?company_name=${encodeURIComponent(query)}`;
+    // 1. 获取基础 URL
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    
+    // 2. 移除末尾可能存在的斜杠，防止拼接出 //
+    const cleanedApiUrl = apiUrl.replace(/\/$/, "");
 
+    // 3. 智能拼接：检查环境变量是否已经包含了 /api/v1
+    // 如果包含了，就直接用；如果不包含，才手动加上 /api/v1
+    const finalBaseUrl = cleanedApiUrl.includes('/api/v1') 
+        ? cleanedApiUrl 
+        : `${cleanedApiUrl}/api/v1`;
+
+    // 4. 生成最终请求地址
+    const url = `${finalBaseUrl}/audit?company_name=${encodeURIComponent(query)}`;
+    
+    // 打印出来检查，你可以在浏览器 F12 控制台看到这个路径是否正确
+    console.log("🚀 正在请求后端地址:", url);
+    
     const source = new EventSource(url);
     source.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         handleSSEMessage(data, newAssistantMsgId);
-      } catch (e) {
-        console.error("数据解析失败", e);
-      }
+      } catch (e) { console.error(e); }
     };
 
     source.addEventListener('complete', () => {
@@ -58,7 +78,7 @@ export default function AuditApp() {
     });
 
     source.onerror = () => {
-      setError('审计连接中断，请检查 API 余额或网络');
+      setError('审计服务器连接超时');
       setIsTyping(false);
       source.close();
     };
@@ -70,149 +90,142 @@ export default function AuditApp() {
     setMessages(prev => prev.map(msg => {
       if (msg.id === msgId) {
         if (data.type === 'log') {
+          // 如果包含智能体标识，更新当前 Agent 状态 [cite: 18]
           if (data.content.includes('[')) {
             const agentName = data.content.match(/\[(.*?)\]/)?.[1] || "";
             setCurrentAgent(agentName);
           }
-          return {
-            ...msg,
+          return { 
+            ...msg, 
             logs: [...(msg.logs || []), data.content],
-            step: Math.min((msg.step || 0) + 1, 3)
+            step: Math.min((msg.step || 0) + 1, 3) 
           };
         }
         if (data.type === 'metrics') {
+          setActiveTabMap(prevTab => ({ ...prevTab, [msgId]: 'profit' }));
           return { ...msg, metrics: data.metrics, charts: data.charts, step: 4, loading: false };
         }
+        return msg;
       }
       return msg;
     }));
   };
 
-  const RenderChart = ({ chartData }: { chartData?: any }) => {
+  const RenderChart = ({ type, chartData }: { type: string; chartData?: any }) => {
     const data = chartData?.profit_chart?.data || [];
-    if (!data || data.length === 0) return null;
-
-    const maxVal = Math.max(...data.map((d: any) => d.revenue || 1));
-    return (
-      <div className="w-full flex flex-col items-center mt-6 p-4 bg-slate-50 rounded-xl">
-        <div className="text-[10px] font-black text-slate-400 mb-4 self-start">营收与利润趋势</div>
-        <div className="w-full h-40 flex items-end justify-around border-b border-slate-200 pb-2">
-          {data.map((d: any, i: number) => (
-            <div key={i} className="flex flex-col items-center w-full">
-              <div className="flex items-end gap-1 h-32">
-                <div style={{ height: `${(d.revenue / maxVal) * 100}%` }} className="w-4 bg-violet-500 rounded-t-sm" />
-                <div style={{ height: `${(d.profit / maxVal) * 100}%` }} className="w-4 bg-teal-400 rounded-t-sm" />
+    if (data.length === 0) return <div className="text-slate-300 py-20 font-bold text-center w-full">等待多智能体提取数据...</div>;
+    
+    if (type === 'profit') {
+      const maxVal = Math.max(...data.map((d: any) => d.revenue || 1));
+      return (
+        <div className="w-full h-full flex flex-col items-center p-6 animate-in fade-in">
+          <div className="flex gap-8 mb-6 text-[10px] font-black text-slate-400">
+            <div className="flex items-center"><div className="w-3 h-3 bg-violet-500 mr-2 rounded-sm" /> 营收 (亿)</div>
+            <div className="flex items-center"><div className="w-3 h-3 bg-teal-400 mr-2 rounded-sm" /> 利润 (亿)</div>
+          </div>
+          <div className="flex-1 w-full flex items-end justify-around border-b border-slate-100 pb-2">
+            {data.map((d: any, i: number) => (
+              <div key={i} className="flex flex-col items-center w-20">
+                <div className="flex items-end gap-1 h-40">
+                  <div style={{ height: `${(d.revenue / maxVal) * 100}%` }} className="w-6 bg-violet-500 rounded-t-sm" />
+                  <div style={{ height: `${(d.profit / maxVal) * 100}%` }} className="w-6 bg-teal-400 rounded-t-sm" />
+                </div>
+                <span className="mt-2 text-[10px] font-bold text-slate-500">{d.year}</span>
               </div>
-              <span className="mt-2 text-[10px] font-bold text-slate-500">{d.year}</span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
+    return <div className="py-20 text-slate-400">资产负债表穿透中...</div>;
   };
 
   return (
     <div className="min-h-screen bg-[#FDFDFF] flex flex-col font-sans">
-      <main className="flex-1 flex flex-col items-center relative overflow-hidden">
+      <main className="flex-1 flex flex-col items-center relative">
         {stage === 'home' ? (
           <div className="w-full max-w-4xl pt-40 px-6 flex flex-col items-center">
-            <div className="w-16 h-16 bg-violet-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-violet-200">
-              <ShieldCheck className="text-white" size={32} />
-            </div>
-            <h1 className="text-5xl font-black mb-4 tracking-tight text-slate-900">Multi-Agent 审计终端</h1>
-            <p className="text-slate-400 mb-12 text-lg">基于 LangGraph 的分布式财务合规校验系统</p>
-            <div className="w-full relative max-w-2xl">
-              <input
-                className="w-full pl-6 pr-32 py-5 bg-white rounded-2xl border border-slate-100 shadow-2xl outline-none focus:ring-2 ring-violet-500 transition-all"
-                placeholder="输入分析主体，例如：比亚迪..."
+            <h1 className="text-5xl font-black mb-4 text-[#1a1c2e]">Multi-Agent 审计终端</h1>
+            <p className="text-slate-400 text-lg mb-12">基于 LangGraph 的多智能体财务逻辑校验系统</p>
+            <div className="w-full relative">
+              <input 
+                className="w-full pl-14 pr-32 py-5 bg-white rounded-2xl border border-slate-100 shadow-xl outline-none"
+                placeholder="输入分析主体，例如：比亚迪"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               />
-              <button
-                onClick={() => handleSend()}
-                className="absolute right-3 top-3 bottom-3 px-6 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors"
-              >
-                启动审计
-              </button>
+              <button onClick={() => handleSend()} className="absolute right-3 top-3 bottom-3 px-8 bg-[#9D8BFF] text-white font-bold rounded-xl">启动审计</button>
             </div>
           </div>
         ) : (
-          <div className="w-full max-w-5xl h-full flex flex-col pt-10 pb-20 px-6 overflow-y-auto">
-            <div className="flex justify-between items-center mb-12">
-              <button
-                onClick={() => setStage('home')}
-                className="flex items-center text-slate-400 font-bold hover:text-slate-600 transition-colors"
-              >
-                <ArrowLeft size={18} className="mr-2" /> 返回
-              </button>
-              <div className="bg-violet-50 px-4 py-2 rounded-full border border-violet-100 flex items-center gap-2">
-                <Activity size={14} className="text-violet-500 animate-pulse" />
-                <span className="text-[11px] font-black text-violet-600 uppercase">当前节点: {currentAgent}</span>
-              </div>
-            </div>
+          <div className="w-full max-w-5xl h-full flex flex-col pt-10 pb-40 overflow-y-auto px-6 space-y-12">
+             <div className="flex items-center justify-between">
+                <button onClick={() => setStage('home')} className="flex items-center text-slate-400 font-bold text-sm"><ArrowLeft size={16} /> 返回</button>
+                <div className="flex items-center space-x-2 bg-violet-50 px-4 py-1.5 rounded-full border border-violet-100">
+                    <Bot size={14} className="text-violet-500 animate-pulse" />
+                    <span className="text-[11px] font-black text-violet-600 uppercase">当前 Agent: {currentAgent}</span>
+                </div>
+             </div>
 
-            <div className="space-y-8">
-              {messages.map((msg, idx) => (
-                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`flex ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start gap-4 max-w-[90%]`}>
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${msg.role === 'user' ? 'bg-violet-600 text-white' : 'bg-white border border-slate-100 text-violet-500'}`}>
-                      {msg.role === 'user' ? <User size={20} /> : <Bot size={20} />}
-                    </div>
-                    <div className={`p-6 rounded-2xl ${msg.role === 'user' ? 'bg-white border border-slate-100 font-bold shadow-sm' : 'bg-white border border-slate-100 shadow-xl w-full'}`}>
-                      {msg.role === 'assistant' ? (
-                        <div className="space-y-4">
-                          {msg.metrics ? (
-                            <div>
-                              <div className="grid grid-cols-2 gap-4 mb-6">
-                                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                                  <div className="text-[10px] font-black text-slate-400 uppercase mb-1">审计评分</div>
-                                  <div className="text-2xl font-black text-violet-600">
-                                    {msg.metrics.health?.roe || "—"}
-                                  </div>
-                                </div>
-                                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                                  <div className="text-[10px] font-black text-slate-400 uppercase mb-1">最新营收</div>
-                                  <div className="text-2xl font-black text-slate-900">
-                                    {msg.metrics.health?.latest_revenue || "已核定"}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="text-sm font-bold text-slate-700 leading-relaxed mb-4">
-                                <TrendingUp size={16} className="inline mr-2 text-teal-500" />
-                                {msg.metrics.summary || "数据分析完成"}
-                              </div>
-                              <RenderChart chartData={msg.charts} />
-                            </div>
-                          ) : (
-                            <div className="space-y-3">
-                              {msg.logs.map((log: string, i: number) => (
-                                <div key={i} className="text-xs text-slate-400 flex items-center">
-                                  <span className="w-1 h-1 bg-violet-300 rounded-full mr-2" /> {log}
-                                </div>
-                              ))}
-                              {msg.loading && (
-                                <div className="text-xs text-violet-500 font-bold animate-pulse">
-                                  Agent 正在勾稽底层账目...
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-slate-800">{msg.content}</div>
-                      )}
-                    </div>
+            {messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`flex ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start gap-4 w-full`}>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${msg.role === 'user' ? 'bg-[#9D8BFF] text-white' : 'bg-white border border-slate-100 text-violet-500'}`}>
+                    {msg.role === 'user' ? <User size={20} /> : <Activity size={20} />}
                   </div>
+
+                  {msg.role === 'assistant' && (
+                    <div className="bg-white border border-slate-100 rounded-3xl shadow-xl w-full overflow-hidden">
+                      <div className="px-10 py-4 bg-slate-50/50 border-b border-slate-50 flex items-center justify-between">
+                        {getWorkflowSteps(msg.content).map((s: any, i: number) => (
+                          <div key={i} className="flex items-center space-x-2">
+                            <CheckCircle2 size={12} className={i <= (msg.step || 0) ? "text-emerald-500" : "text-slate-200"} />
+                            <span className={`text-[10px] font-black uppercase ${i <= (msg.step || 0) ? "text-slate-600" : "text-slate-300"}`}>{s.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="p-10">
+                        {msg.metrics ? (
+                          <>
+                            <div className="grid grid-cols-3 gap-6 mb-10">
+                                <div className="bg-[#F8FAFF] p-5 rounded-xl">
+                                    <div className="text-[10px] font-black text-slate-400 uppercase mb-2">审计评分</div>
+                                    <div className="text-3xl font-black">{msg.metrics.health?.overall || 0}</div>
+                                </div>
+                                <div className="bg-[#F8FAFF] p-5 rounded-xl col-span-2">
+                                    <div className="text-[10px] font-black text-slate-400 uppercase mb-2">AI 审计结论</div>
+                                    <div className="text-xs font-bold text-slate-600 leading-relaxed">{msg.metrics.summary}</div>
+                                </div>
+                            </div>
+                            <div className="flex border-b border-slate-100 mb-8">
+                                {['profit', 'cash'].map(t => (
+                                    <button key={t} onClick={() => setActiveTabMap(p => ({...p, [msg.id]: t}))} className={`px-6 py-3 text-xs font-black ${activeTabMap[msg.id] === t ? 'text-violet-600 border-b-2 border-violet-600' : 'text-slate-400'}`}>
+                                        {t === 'profit' ? '营收利润' : '现金流量'}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="h-[300px] flex items-center justify-center">
+                                <RenderChart type={activeTabMap[msg.id] || 'profit'} chartData={msg.charts} />
+                            </div>
+                          </>
+                        ) : (
+                          <div className="space-y-4 py-10">
+                            {msg.logs?.map((log: string, i: number) => (
+                              <div key={i} className="text-xs font-medium text-slate-400 flex items-center">
+                                <span className="w-1.5 h-1.5 bg-violet-300 rounded-full mr-3" /> {log}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {msg.role === 'user' && <div className="bg-white border border-slate-100 px-6 py-3 rounded-2xl font-bold shadow-sm">{msg.content}</div>}
                 </div>
-              ))}
-              {error && (
-                <div className="p-4 bg-red-50 text-red-500 rounded-xl text-xs font-bold border border-red-100 text-center">
-                  {error}
-                </div>
-              )}
-              <div ref={scrollRef} className="h-4" />
-            </div>
+              </div>
+            ))}
+            <div ref={scrollRef} className="h-20" />
           </div>
         )}
       </main>
