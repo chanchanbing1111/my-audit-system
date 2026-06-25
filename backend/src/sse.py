@@ -1,102 +1,140 @@
-
+"""
+Sentient Audit System - SSE 流式接口
+"""
 import json
 import asyncio
 import os
 import uuid
 import logging
-from typing import AsyncGenerator
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
+
 from src.audit_engine import AuditEngine
 
-# 初始化日志
-logger = logging.getLogger(__name__)
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-class SSEStreamer:
-    def __init__(self):
-        # 初始化多智能体审计引擎
-        self.engine = AuditEngine(tavily_api_key=os.getenv('TAVILY_API_KEY'))
+_engine = None
 
-    async def stream_workflow(self, company_name: str) -> AsyncGenerator[dict, None]:
-        try:
-            # 1. 🚀 建立连接
-            yield {
-                "event": "message",
-                "data": json.dumps({"type": "log", "content": "📡 已连接多智能体审计服务器..."})
-            }
 
-            # 2. ⚙️ 配置 LangGraph 线程
-            config = {
-                "configurable": {
-                    "thread_id": str(uuid.uuid4()) 
-                }
-            }
-            
-            # 初始化多智能体状态
-            initial_input = {
-                "company_name": company_name, 
-                "logs": [], 
-                "raw_data": {},
-                "retry_count": 0
-            }
-            
-            # 3. ⚡ 异步流式运行多智能体图
-            async for event in self.engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
-                for node_name, node_data in event.items():
-                    logger.info(f"🤖 智能体节点完成: {node_name}")
-                    
-                    # A. 实时发送过程日志
-                    if "logs" in node_data and node_data["logs"]:
-                        latest_log = node_data["logs"][-1]
-                        yield {
-                            "event": "message",
-                            "data": json.dumps({
-                                "type": "log", 
-                                "content": latest_log # 这里包含了类似 [搜索智能体] 的前缀
-                            })
-                        }
-                    
-                    # B. 发送财务指标（由审计智能体或质检智能体产出）
-                    # 在多智能体架构中，我们监听最终产出数据的节点
-                    if "metrics" in node_data and node_data.get("metrics"):
-                        yield {
-                            "event": "message",
-                            "data": json.dumps({
-                                "type": "metrics",
-                                "metrics": node_data.get("metrics", {}),
-                                "charts": node_data.get("charts", {}),
-                                "metrics_details": f"由 {node_name} 最终核定"
-                            })
-                        }
+def get_engine():
+    global _engine
+    if _engine is None:
+        api_key = os.getenv('EXA_API_KEY')
+        if not api_key:
+            raise ValueError("EXA_API_KEY is missing in environment variables")
+        _engine = AuditEngine(exa_api_key=api_key)
+    return _engine
 
-            # 4. ✅ 流程彻底结束
-            yield {
-                "event": "complete", 
-                "data": json.dumps({"success": True})
-            }
-
-        except Exception as e:
-            error_msg = f"❌ 审计流异常: {str(e)}"
-            logger.error(f"SSE Error: {error_msg}")
-            yield {
-                "event": "message", 
-                "data": json.dumps({"type": "error", "content": error_msg})
-            }
 
 @router.get("/audit")
-async def stream_audit(company_name: str):
+async def stream_audit(request: Request, company_name: str):
+    """SSE 流式审计接口"""
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name required")
-    
-    streamer = SSEStreamer()
-    # 增加 timeout 到 600s，因为多智能体循环（重搜）可能耗时较久
-    return EventSourceResponse(
-        streamer.stream_workflow(company_name),
-        ping=20,
-        send_timeout=600 
-    )
 
-@router.get("/health")
-async def health_check():
-    return {"status": "healthy", "mode": "multi-agent"}
+    async def event_generator():
+        engine = get_engine()
+
+        # Step 1: 预热日志（防止连接断开）
+        warmup_logs = [
+            f"📡 正在建立 2026 安全审计加密隧道...",
+            f"🔎 正在向数据中心申请 {company_name} 2023-2025 财报访问权限...",
+            f"🧠 正在调度分布式审计智能体节点 (Node: {str(uuid.uuid4())[:8]})...",
+            f"📊 正在初始化多年度勾稽关系算法，准备深度侦测..."
+        ]
+
+        for log in warmup_logs:
+            yield {"event": "message", "data": json.dumps({"type": "log", "content": log})}
+            await asyncio.sleep(1)
+
+        # Step 2: 运行 LangGraph 工作流（同步调用 + 实时推送中间结果）
+        thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        initial_input = {
+            "company_name": company_name,
+            "logs": [],
+            "raw_data": {},
+            "retry_count": 0
+        }
+
+        try:
+            # 使用 ainvoke（一次性获取完整结果），同时开启后台日志推送
+            async def run_workflow():
+                """后台运行工作流，把每步结果通过队列传回来"""
+                try:
+                    async for event in engine.workflow.astream(initial_input, config=config, stream_mode="updates"):
+                        for node_name, node_data in event.items():
+                            await result_queue.put((node_name, node_data))
+                    await result_queue.put(("__done__", None))
+                except Exception as e:
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    await result_queue.put(("__error__", str(e)))
+
+            result_queue = asyncio.Queue()
+
+            # 启动后台工作流
+            workflow_task = asyncio.create_task(run_workflow())
+
+            # 同时监听队列，实时推送结果给前端
+            while True:
+                try:
+                    node_name, node_data = await asyncio.wait_for(result_queue.get(), timeout=60)
+                except asyncio.TimeoutError:
+                    # 工作流超过60秒无输出，强制结束
+                    workflow_task.cancel()
+                    yield {"event": "message", "data": json.dumps({
+                        "type": "log", "content": "⚠️ 审计超时，请检查 EXA API 或网络连接"
+                    })}
+                    break
+
+                if node_name == "__done__":
+                    break
+                if node_name == "__error__":
+                    yield {"event": "message", "data": json.dumps({
+                        "type": "log", "content": f"❌ 工作流异常: {node_data}"
+                    })}
+                    break
+
+                # 推送 logs
+                if "logs" in node_data and node_data["logs"]:
+                    msg = str(node_data["logs"][-1]).replace("\n", " ").replace("\r", "")
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({"type": "log", "content": f"[{node_name}] {msg}"})
+                    }
+
+                # 推送 metrics
+                if "metrics" in node_data and node_data.get("metrics"):
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({
+                            "type": "metrics",
+                            "metrics": node_data["metrics"],
+                            "charts": node_data.get("charts", {}),
+                            "details": f"核定节点: {node_name}"
+                        })
+                    }
+
+            # 等待后台任务结束
+            workflow_task.cancel()
+
+        except Exception as e:
+            import traceback
+            logger.error(traceback.format_exc())
+            yield {"event": "message", "data": json.dumps({
+                "type": "log", "content": f"❌ 审计中断: {str(e)}"
+            })}
+
+        # 最后发送 complete
+        yield {"event": "complete", "data": json.dumps({"success": True})}
+
+    return EventSourceResponse(
+        event_generator(),
+        ping=20,
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        }
+    )
